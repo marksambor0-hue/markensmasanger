@@ -1,134 +1,35 @@
-name: Build MARKENS Windows EXE (x64)
+name: Build MARKENS Windows EXE
 
 on:
   push:
-    branches:
-      - main
-      - master
-    tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-windows:
-    name: Build MARKENS_Setup.exe on Windows
     runs-on: windows-latest
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout repository
+      - name: Get source code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Prepare and verify project structure & icons
-        shell: pwsh
-        run: |
-          # Автоматическая распаковка загруженных архивов, если main.js, preload.js или package.json лежат внутри .zip
-          if (-not (Test-Path "main.js") -or -not (Test-Path "preload.js") -or -not (Test-Path "package.json")) {
-            if (Test-Path "main_and_preload_js.zip") {
-              Write-Host "Extracting main_and_preload_js.zip..."
-              Expand-Archive -Path "main_and_preload_js.zip" -DestinationPath "." -Force
-            }
-            $zips = Get-ChildItem -Filter "MARKENS*.zip" | Sort-Object LastWriteTime -Descending
-            foreach ($z in $zips) {
-              if (-not (Test-Path "main.js") -or -not (Test-Path "preload.js") -or -not (Test-Path "package.json")) {
-                Write-Host "Extracting $($z.Name)..."
-                Expand-Archive -Path $z.FullName -DestinationPath "." -Force
-              }
-            }
-          }
-
-          # Резервная автогенерация preload.js, если файл всё ещё не найден
-          if (-not (Test-Path "preload.js")) {
-            Write-Host "Generating preload.js..."
-            @'
-          const { contextBridge, ipcRenderer } = require('electron');
-
-          contextBridge.exposeInMainWorld('markensDesktop', {
-            isDesktopApp: true,
-            platform: process.platform,
-            version: '30.1.0',
-            onToggleMic: (cb) => {
-              ipcRenderer.removeAllListeners('markens:toggle-mic');
-              ipcRenderer.on('markens:toggle-mic', () => cb());
-            },
-            onToggleDeaf: (cb) => {
-              ipcRenderer.removeAllListeners('markens:toggle-deaf');
-              ipcRenderer.on('markens:toggle-deaf', () => cb());
-            },
-            onToggleOverlay: (cb) => {
-              ipcRenderer.removeAllListeners('markens:toggle-overlay');
-              ipcRenderer.on('markens:toggle-overlay', () => cb());
-            },
-            onGameDetected: (cb) => {
-              ipcRenderer.removeAllListeners('markens:game-detected');
-              ipcRenderer.on('markens:game-detected', (_e, game) => cb(game));
-            },
-            applyUpdateAndRestart: (rel) => ipcRenderer.send('markens:apply-update', rel)
-          });
-          '@ | Set-Content -Path "preload.js" -Encoding UTF8
-          }
-
-          $required = @('package.json', 'main.js', 'preload.js', 'index.html', 'icon.ico')
-          foreach ($file in $required) {
-            if (-not (Test-Path $file)) {
-              Write-Error "Missing required file in repository root: $file"
-              exit 1
-            }
-          }
-
-          # Дублируем иконки в папку assets/ для полной совместимости путей
-          New-Item -ItemType Directory -Force -Path "assets" | Out-Null
-          if (Test-Path "icon.ico") { Copy-Item "icon.ico" "assets/icon.ico" -Force }
-          if (Test-Path "icon.png") { Copy-Item "icon.png" "assets/icon.png" -Force }
-          Write-Host "All MARKENS v30.1 project files verified."
+          node-version: 20
 
       - name: Install dependencies
-        shell: cmd
-        run: npm install --no-audit --no-fund
+        run: npm install
 
-      - name: Build Windows Installer (MARKENS_Setup.exe)
-        shell: cmd
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run dist:win
+      - name: Build installer and portable app
+        run: npm run dist
 
-      - name: Verify generated .exe in dist/
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "dist/MARKENS_Setup.exe")) {
-            $exe = Get-ChildItem -Path "dist" -Filter "*.exe" -File | Select-Object -First 1
-            if ($null -ne $exe) {
-              Copy-Item $exe.FullName "dist/MARKENS_Setup.exe" -Force
-            } else {
-              Write-Error "MARKENS_Setup.exe was not generated in dist/!"
-              exit 1
-            }
-          }
-          Get-ChildItem -Path "dist" -Filter "*.exe" | Format-Table Name, Length, LastWriteTime
-
-      - name: Upload MARKENS_Setup.exe to GitHub Actions Artifacts
+      - name: Upload Windows EXE files
         uses: actions/upload-artifact@v4
         with:
-          name: MARKENS-Windows-x64-Installer
-          path: |
-            dist/MARKENS_Setup.exe
+          name: MARKENS-Windows-x64-EXE
+          path: dist/*.exe
           if-no-files-found: error
-          retention-days: 90
-
-      - name: Publish to GitHub Releases (when tag v* is pushed)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/MARKENS_Setup.exe
-          generate_release_notes: true
+          retention-days: 14
