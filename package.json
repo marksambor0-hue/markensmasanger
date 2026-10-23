@@ -1,0 +1,75 @@
+{
+  "name": "markens-messenger",
+  "version": "30.1.0",
+  "description": "MARKENS Messenger v30.1 — Десктопный игровой мессенджер и голосовые комнаты VORTEX для Windows 10/11 (x64)",
+  "main": "main.js",
+  "author": "markens",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/marksambor0-hue/markensmasanger.git"
+  },
+  "homepage": "https://github.com/marksambor0-hue/markensmasanger",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis portable --x64 --publish never",
+    "dist:setup": "electron-builder --win nsis --x64 --publish never",
+    "dist:portable": "electron-builder --win portable --x64 --publish never"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^31.3.1",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.markens.messenger",
+    "productName": "MARKENS",
+    "copyright": "Copyright © 2026 markens",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "icon.ico",
+      "icon.png",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "MARKENS_Setup.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MARKENS",
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "installerHeaderIcon": "icon.ico",
+      "runAfterFinish": true
+    },
+    "portable": {
+      "artifactName": "MARKENS_Portable.exe"
+    }
+  }
+}
