@@ -1,15 +1,10 @@
 {
   "name": "markens-messenger",
   "version": "30.1.0",
-  "description": "MARKENS Messenger v30.1 — Десктопный игровой мессенджер и голосовые комнаты VORTEX для Windows 10/11 (x64)",
+  "description": "MARKENS Messenger v30.1 — Игровой мессенджер и голосовые комнаты VORTEX для Windows 10/11 (x64)",
   "main": "main.js",
   "author": "markens",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/marksambor0-hue/markensmasanger.git"
-  },
-  "homepage": "https://github.com/marksambor0-hue/markensmasanger",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win nsis portable --x64 --publish never",
@@ -32,13 +27,11 @@
       "main.js",
       "preload.js",
       "index.html",
-      "icon.ico",
-      "icon.png",
       "assets/**/*",
       "package.json"
     ],
     "win": {
-      "icon": "icon.ico",
+      "icon": "assets/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -63,9 +56,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "MARKENS",
-      "installerIcon": "icon.ico",
-      "uninstallerIcon": "icon.ico",
-      "installerHeaderIcon": "icon.ico",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
       "runAfterFinish": true
     },
     "portable": {

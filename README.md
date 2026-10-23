@@ -1,62 +1,30 @@
-# MARKENS Messenger v30.1 — Сборка для Windows 10/11 (x64) через GitHub Actions
+# MARKENS Messenger v30.1 — Windows build via GitHub Actions
 
-Полноценный проект настольного приложения **MARKENS v30.1** на базе Electron + Electron Builder, подготовленный для автоматической облачной компиляции настоящего `MARKENS_Setup.exe` и `MARKENS_Portable.exe` на серверах GitHub Actions (`windows-latest` x64).
+This archive contains the Electron project and the GitHub Actions workflow needed to build Windows x64 executables in GitHub's hosted Windows environment. It does **not** contain a prebuilt `.exe`.
 
-## Что исправлено в v30.1
+## What's included
 
-1. **Устранено бесконечное автообновление (OTA Loop)**:
-   - Удалён принудительный синхронный перезапуск через `document.write()` на этапе загрузки страницы (`Bootloader`) и при проверке `IndexedDB`.
-   - Отключён безусловный 3-секундный таймер автоматического перезапуска (`autoForce`). Теперь при выходе новой версии сверху появляется аккуратная зелёная плашка уведомления, а обновление применяется только по вашему нажатию кнопки **«⚡ Обновить и перезапустить»**.
-   - Добавлена защита от повторной установки одной и той же версии (`markens_last_applied_ota_sig`) и сравнение строго по семантической версии (`SemVer`), исключающее рассинхрон системных часов между устройствами.
-   - Отключена фоновая перезапись базы Firebase при каждом открытии вкладки — публикация в облако выполняется только по явному нажатию кнопки **«🔄 Синхронизировать все устройства»** в настройках Создателя.
-2. **Сохранены все функции мессенджера**:
-   - Личные сообщения, друзья, статусы активности и сервер VORTEX.
-   - Голосовые комнаты (WebRTC P2P + Mesh), демонстрация экрана 1080p/1440p 60 FPS со звуком системы, мини-окно стрима поверх игр (PiP) и Кинозал (Watch Party).
-   - Системный трей Windows (сворачивание без разрыва звонка), глобальные горячие клавиши (`Ctrl+Shift+M`, `Ctrl+Shift+D`, `Ctrl+Shift+O`) и фоновый детектор запущенных игр Steam (`tasklist`).
+- `index.html` — MARKENS interface/application code supplied in the archive
+- `main.js`, `preload.js` — Electron main process and preload bridge
+- `package.json` — Electron Builder configuration
+- `assets/icon.ico`, `assets/icon.png` — app icons in the paths expected by the build config
+- `.github/workflows/build-windows.yml` — Windows build workflow
 
-## Структура проекта
+## Build through GitHub (no Node.js needed on your own device)
 
-```text
-├── .github/
-│   └── workflows/
-│       └── build-windows.yml   # Workflow автоматической сборки на Windows Server (GitHub Actions)
-├── assets/
-│   ├── icon.ico                # Мультиразмерная иконка Windows (256x256..16x16) для инсталлятора NSIS
-│   └── icon.png                # Иконка приложения 512x512
-├── index.html                  # Полный исходный код интерфейса и логики MARKENS v30.1 (исправленный)
-├── main.js                     # Главный процесс Electron (окно, трей, хоткеи, захват экрана, детектор игр)
-├── preload.js                  # Защищённый мост contextBridge (window.markensDesktop)
-├── package.json                # Конфигурация зависимостей и параметров сборки Electron Builder
-└── .gitignore
-```
+1. Open https://github.com/new and create a repository under **your own GitHub account**. Call it `MARKENS-Windows` or choose another name. You may choose Private.
+2. Extract this ZIP on your device. Open the new repository and use **Add file → Upload files** to upload the *contents* of the extracted folder, including the `.github/workflows/build-windows.yml` file and the `assets` folder. Commit the upload to the `main` branch.
+3. Open the **Actions** tab in the repository you just created. The workflow should start automatically after the commit. If prompted, enable GitHub Actions.
+4. Open the completed workflow run and download `MARKENS-Windows-x64-EXE` from **Artifacts**. Extract that downloaded ZIP; it should contain `MARKENS_Setup.exe` and `MARKENS_Portable.exe` if both targets build successfully.
 
-## Как собрать настоящий `MARKENS_Setup.exe` через GitHub Actions (без установки Node.js на свой ПК)
+Important: a URL like `https://github.com/markens/markens/actions` works only if a repository actually exists at that exact owner/repository path and you have access to it. Create your own repository first and open **Actions inside that repository**. A 404 at that example URL does not mean this archive failed to download.
 
-1. Создайте новый репозиторий на [GitHub](https://github.com/new) (можно приватный или публичный).
-2. Распакуйте содержимое архива `MARKENS_v30.1_GitHub_Actions_Windows_Project.zip` и загрузите все файлы (включая папку `.github/workflows/build-windows.yml` и папку `assets/`) в корень репозитория:
-   - Через веб-интерфейс GitHub (**Add file -> Upload files** — перетащите все файлы и папки из распакованного архива и нажмите **Commit changes**);
-   - Или через Git в терминале:
-     ```bash
-     git init
-     git add .
-     git commit -m "MARKENS v30.1 Windows Electron build"
-     git branch -M main
-     git remote add origin https://github.com/<ВАШ_ЛОГИН>/<ВАШ_РЕПОЗИТОРИЙ>.git
-     git push -u origin main
-     ```
-3. Откройте вкладку **Actions** в вашем репозитории на GitHub:
-   - Сборка **Build MARKENS Windows EXE (x64)** запустится автоматически сразу после загрузки файлов (также её можно запустить вручную кнопкой **Run workflow**).
-4. Подождите ~2–3 минуты до появления зелёной галочки, откройте завершённый запуск и внизу в блоке **Artifacts** скачайте архив **`MARKENS-Windows-x64-EXE`**, внутри которого будут лежать скомпилированные нативные файлы для Windows 10/11 (x64):
-   - **`MARKENS_Setup.exe`** — полноценный установщик Windows (NSIS) с выбором папки установки и созданием ярлыков на Рабочем столе и в меню «Пуск».
-   - **`MARKENS_Portable.exe`** — портативная версия, работающая без установки.
+## Local build (optional)
 
-## Локальная сборка на своём ПК (опционально)
+With Node.js 20+ installed, run `npm install` and then `npm run dist`. Outputs are placed in `dist/`.
 
-Если у вас на компьютере установлен [Node.js 20+](https://nodejs.org/), вы также можете собрать `.exe` локально двумя командами в папке проекта:
+## Important notes
 
-```bash
-npm install
-npm run dist
-```
-
-Готовые файлы `MARKENS_Setup.exe` и `MARKENS_Portable.exe` появятся в папке `dist/`.
+- The workflow verifies that EXE files were produced before uploading an artifact; a successful workflow run is required before calling the result built.
+- This package is not code-signed. Windows SmartScreen may show a warning for an unsigned installer.
+- This project has not been runtime-tested on a Windows machine in this environment. Verify messaging, login, Firebase, microphone/camera, screen sharing, and other core features after building.

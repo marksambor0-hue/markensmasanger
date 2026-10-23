@@ -25,15 +25,10 @@ if (!gotTheLock) {
 }
 
 function getAppIconPath() {
-  const candidates = [
-    path.join(__dirname, 'icon.ico'),
-    path.join(__dirname, 'icon.png'),
-    path.join(__dirname, 'assets', 'icon.ico'),
-    path.join(__dirname, 'assets', 'icon.png')
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
-  }
+  const icoPath = path.join(__dirname, 'assets', 'icon.ico');
+  const pngPath = path.join(__dirname, 'assets', 'icon.png');
+  if (fs.existsSync(icoPath)) return icoPath;
+  if (fs.existsSync(pngPath)) return pngPath;
   return undefined;
 }
 
@@ -62,14 +57,14 @@ function createWindow() {
   });
 
   // Automatically grant microphone, webcam, screen share, and notification permissions
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     callback(true);
   });
 
   session.defaultSession.setPermissionCheckHandler(() => true);
 
   // Enable 1080p/1440p 60FPS screen capture with loopback system audio
-  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
       if (sources && sources.length > 0) {
         callback({ video: sources[0], audio: 'loopback' });
@@ -79,7 +74,7 @@ function createWindow() {
     }).catch(() => callback({}));
   });
 
-  // Open external links in default OS browser while allowing internal stream popouts (about:blank)
+  // Open external links in default OS browser while allowing internal popouts (about:blank)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (!url || url === 'about:blank') {
       return {
@@ -218,7 +213,7 @@ function startSteamProcessDetector() {
   }, 5000);
 }
 
-ipcMain.on('markens:apply-update', (_event, _rel) => {
+ipcMain.on('markens:apply-update', (_event, rel) => {
   // Handled cleanly in renderer without infinite reload loops
 });
 
