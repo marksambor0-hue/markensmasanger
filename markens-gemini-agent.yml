@@ -1,0 +1,251 @@
+name: MARKENS — Gemini Auto Developer
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: markens-gemini-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    # Only the repository owner can ask the agent to change code.
+    if: >-
+      github.event.issue.pull_request == null &&
+      github.event.comment.user.login == github.repository_owner &&
+      contains(github.event.comment.body, '@gemini-cli')
+    runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.prepare.outputs.branch }}
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - name: Checkout the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Prepare an isolated change branch and save the request
+        id: prepare
+        shell: bash
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          branch="ai/markens-issue-${ISSUE_NUMBER}-${RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          mkdir -p .gemini
+          printf '%s\n' "$COMMENT_BODY" > .gemini/markens-request.md
+          # Keep temporary Gemini CLI files and credentials out of commits.
+          printf '\n.gemini/\ngha-creds-*.json\n' >> .git/info/exclude
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Run Gemini CLI on the request
+        uses: google-github-actions/run-gemini-cli@v0
+        env:
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |-
+            You are the autonomous engineer for the existing MARKENS v30.1 Electron messenger.
+            Read GEMINI.md if present, inspect the actual repository, and read the complete request from .gemini/markens-request.md.
+            IMPLEMENT the requested change in the repository; do not merely explain or print replacement code.
+            Preserve the existing UI, Firebase integration, login, chats, and working features unless the request specifically changes them.
+            Do not replace this Electron app with a different framework. Do not delete features to make a build pass.
+            Do not put secrets, API keys, or credentials in source files. Never claim a test passed unless you ran it.
+            Prefer small, targeted changes. Run the relevant checks available in package.json. Do not commit or push; the workflow handles that after validation.
+          settings: |-
+            {
+              "model": { "maxSessionTurns": 30 },
+              "tools": {
+                "core": [
+                  "list_directory",
+                  "read_file",
+                  "read_many_files",
+                  "glob",
+                  "grep_search",
+                  "write_file",
+                  "replace",
+                  "run_shell_command(npm)",
+                  "run_shell_command(node)",
+                  "run_shell_command(npx)"
+                ]
+              }
+            }
+
+      - name: Remove the temporary request file
+        shell: bash
+        run: rm -f .gemini/markens-request.md
+
+      - name: Install and run available checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f package.json || { echo 'package.json is missing'; exit 1; }
+          npm install --no-audit --no-fund
+          npm test --if-present
+          npm run lint --if-present
+
+      - name: Commit verified source changes to the isolated branch
+        id: commit
+        shell: bash
+        env:
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --cached --check
+          git commit -m "feat: MARKENS update from issue #${ISSUE_NUMBER}"
+          gh auth setup-git
+          git push origin "HEAD:${BRANCH}"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+  build_windows:
+    name: Build and verify Windows installer
+    needs: agent
+    if: needs.agent.outputs.changed == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Gemini's changes
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.agent.outputs.branch }}
+          persist-credentials: false
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Verify required Electron files
+        shell: pwsh
+        run: |
+          $required = @('package.json', 'main.js', 'preload.js', 'index.html')
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) { throw "Required file missing: $file" }
+          }
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Run available tests
+        run: npm test --if-present
+
+      - name: Build installer and portable EXE
+        run: npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Verify output files
+        shell: pwsh
+        run: |
+          $files = @('dist/MARKENS_Setup.exe', 'dist/MARKENS_Portable.exe')
+          foreach ($file in $files) {
+            if (-not (Test-Path $file)) { throw "Expected executable was not generated: $file" }
+            $item = Get-Item $file
+            Write-Host "$($item.Name): $([math]::Round($item.Length / 1MB, 2)) MB"
+          }
+
+      - name: Upload the tested Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: MARKENS-Windows-x64-${{ github.run_number }}
+          path: |
+            dist/MARKENS_Setup.exe
+            dist/MARKENS_Portable.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish verified source changes
+    needs: [agent, build_windows]
+    if: needs.agent.outputs.changed == 'true' && needs.build_windows.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Merge the verified changes into the default branch
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BRANCH: ${{ needs.agent.outputs.branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH"
+          git merge --no-ff "origin/$BRANCH" -m "chore: publish tested MARKENS change"
+          gh auth setup-git
+          git push origin "HEAD:${DEFAULT_BRANCH}"
+
+      - name: Report success on the request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `✅ MARKENS: изменения проверены, Windows-сборка прошла, исходники опубликованы в основной ветке. Установщик и portable EXE находятся в Artifacts этого запуска: [открыть результат](${url}).`
+            });
+
+  no_changes:
+    name: Report that no source change was made
+    needs: agent
+    if: needs.agent.outputs.changed == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment on the request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `ℹ️ Gemini не создал изменений в файлах, поэтому сборка не запускалась. Проверь журнал выполнения и уточни запрос, если нужно: [открыть Actions](${url}).`
+            });
+
+  report_failure:
+    name: Report a failed automation run
+    needs: [agent, build_windows, publish]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment on the request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `⚠️ MARKENS automation не завершилась успешно. Изменения не публикуются до успешной Windows-сборки. Открой журнал и пришли ошибку для исправления: [открыть Actions](${url}).`
+            });
