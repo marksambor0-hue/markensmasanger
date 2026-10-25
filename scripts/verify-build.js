@@ -143,7 +143,7 @@ test('downloaded updater state is recoverable after renderer listener attaches l
 
 test('startup layout guard and updater-state recovery are present', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  assert.match(html, /querySelectorAll\("\\.app-layout"\)/);
+  assert.match(html, /querySelectorAll\("\.app-layout"\)/);
   assert.match(html, /appLayoutsAtBoot\[i\]\.remove\(\)/);
   assert.match(html, /diag\.status === "downloaded" && diag\.downloadedVersion/);
   assert.match(html, /diag\.status === "downloading" && diag\.availableVersion/);
