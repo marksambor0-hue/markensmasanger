@@ -158,20 +158,16 @@ jobs:
       - name: Verify output files
         shell: pwsh
         run: |
-          $files = @('dist/MARKENS_Setup.exe', 'dist/MARKENS_Portable.exe')
-          foreach ($file in $files) {
-            if (-not (Test-Path $file)) { throw "Expected executable was not generated: $file" }
-            $item = Get-Item $file
-            Write-Host "$($item.Name): $([math]::Round($item.Length / 1MB, 2)) MB"
-          }
+          $file = 'dist/MARKENS_Setup.exe'
+          if (-not (Test-Path $file)) { throw "Expected installer was not generated: $file" }
+          $item = Get-Item $file
+          Write-Host "$($item.Name): $([math]::Round($item.Length / 1MB, 2)) MB"
 
       - name: Upload the tested Windows build
         uses: actions/upload-artifact@v4
         with:
           name: MARKENS-Windows-x64-${{ github.run_number }}
-          path: |
-            dist/MARKENS_Setup.exe
-            dist/MARKENS_Portable.exe
+          path: dist/MARKENS_Setup.exe
           if-no-files-found: error
           retention-days: 30
 
