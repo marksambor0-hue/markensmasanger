@@ -10,7 +10,8 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: markens-gemini-${{ github.event.issue.number || github.run_id }}
+  # Serialize Gemini edits so independent requests cannot race while publishing to main.
+  group: markens-gemini-agent
   cancel-in-progress: false
 
 jobs:
@@ -57,7 +58,7 @@ jobs:
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |-
-            You are the autonomous engineer for the existing MARKENS v30.1 Electron messenger.
+            You are the autonomous engineer for the existing MARKENS v31.0 Electron messenger.
             Read GEMINI.md if present, inspect the actual repository, and read the complete request from .gemini/markens-request.md.
             IMPLEMENT the requested change in the repository; do not merely explain or print replacement code.
             Preserve the existing UI, Firebase integration, login, chats, and working features unless the request specifically changes them.
@@ -82,6 +83,22 @@ jobs:
                 ]
               }
             }
+
+      - name: Refuse accidental deletion of existing project files
+        shell: bash
+        run: |
+          set -euo pipefail
+          deleted="$( { git ls-files --deleted; git diff --cached --name-only --diff-filter=D; } | sort -u )"
+          if [[ -n "$deleted" ]]; then
+            printf 'Gemini removed existing tracked file(s); refusing to publish these changes:\n%s\n' "$deleted" >&2
+            exit 1
+          fi
+          for file in package.json main.js preload.js index.html .github/workflows/markens-gemini-agent.yml; do
+            if [[ ! -s "$file" ]]; then
+              printf 'Required existing project file is missing or empty: %s\n' "$file" >&2
+              exit 1
+            fi
+          done
 
       - name: Remove the temporary request file
         shell: bash

@@ -7106,7 +7106,7 @@ goto loop`;
         if (isValidAppHtmlPayload(rel.fullHtml)) {
           const patchedHtml = rel.fullHtml
             .replace(/const\s+CURRENT_SCRIPT_VERSION\s*=\s*["'][^"']+["']\s*;/, `const CURRENT_SCRIPT_VERSION = "${rel.version}";`)
-            .replace(/const\\s+CURRENT_SCRIPT_TS\\s*=\\s*\\d+\\s*;/, `const CURRENT_SCRIPT_TS = ${newTs};`);
+            .replace(/const\s+CURRENT_SCRIPT_TS\s*=\s*\d+\s*;/, `const CURRENT_SCRIPT_TS = ${newTs};`);
           cacheFullHtmlSafely(patchedHtml, newTs);
           saveReleaseToIndexedDB({ ...rel, fullHtml: patchedHtml });
           if (bar) bar.style.width = "100%";

@@ -42,6 +42,19 @@ test('GitHub publishing points to the MARKENS repository', () => {
   assert.equal(pkg.build && pkg.build.nsis && pkg.build.nsis.artifactName, 'MARKENS_Setup.exe');
 });
 
+test('cloud OTA rewrites CURRENT_SCRIPT_TS with a real whitespace regex', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.ok(
+    html.includes('.replace(/const\\s+CURRENT_SCRIPT_TS\\s*=\\s*\\d+\\s*;/,'),
+    'OTA updater must use a valid CURRENT_SCRIPT_TS replacement regex'
+  );
+  const updated = 'const CURRENT_SCRIPT_TS = 123;'.replace(
+    /const\\s+CURRENT_SCRIPT_TS\\s*=\\s*\\d+\\s*;/,
+    'const CURRENT_SCRIPT_TS = 456;'
+  );
+  assert.equal(updated, 'const CURRENT_SCRIPT_TS = 456;');
+});
+
 test('semantic version parser accepts the app version format', () => {
   assert.deepEqual(parseSemVer('v30.1.18'), [30, 1, 18]);
   assert.deepEqual(parseSemVer('30.1'), [30, 1, 0]);
