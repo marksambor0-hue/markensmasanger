@@ -5347,6 +5347,33 @@
       return [currentUser.name.toLowerCase(), String(peerName || "").toLowerCase()].sort().join("__");
     }
 
+    function isValidIncomingDmCall(call, callId, currentUserName, now = Date.now()) {
+      if (!call || typeof call !== "object" || typeof callId !== "string") return false;
+      if (typeof call.caller !== "string" || typeof call.callee !== "string") return false;
+      const caller = call.caller.trim().toLowerCase();
+      const callee = call.callee.trim().toLowerCase();
+      const current = String(currentUserName || "").trim().toLowerCase();
+      if (!caller || !callee || !current || caller === callee || caller === current || callee !== current) return false;
+      if (callId.toLowerCase() !== [caller, callee].sort().join("_")) return false;
+      if (call.state !== "calling" || !["voice", "video"].includes(call.type)) return false;
+      const ts = Number(call.ts);
+      return Number.isFinite(ts) && ts <= now + 5000 && now - ts >= 0 && now - ts < 35000;
+    }
+
+    function isValidPeerSdpMessage(message, expectedPeerName, localUserName, now = Date.now()) {
+      if (!message || typeof message !== "object") return false;
+      const expectedPeer = String(expectedPeerName || "").trim().toLowerCase();
+      const localUser = String(localUserName || "").trim().toLowerCase();
+      if (!expectedPeer || !localUser) return false;
+      if (typeof message.from !== "string" || message.from.trim().toLowerCase() !== expectedPeer) return false;
+      if (typeof message.to !== "string" || message.to.trim().toLowerCase() !== localUser) return false;
+      if (!["offer", "answer"].includes(message.type)) return false;
+      if (typeof message.sdp !== "string" || message.sdp.length < 10 || message.sdp.length > 65536) return false;
+      if (!/^v=0(?:\r?\n)/.test(message.sdp) || !/(?:^|\r?\n)m=(?:audio|video)\s/m.test(message.sdp)) return false;
+      const ts = Number(message.ts);
+      return Number.isFinite(ts) && ts <= now + 5000 && now - ts >= 0 && now - ts <= 120000;
+    }
+
     function closePeerConnectionForUser(peerName) {
       if (!peerName) return;
       const pc = activePeerConnections[peerName];
@@ -5483,7 +5510,7 @@
           fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/ice_${encodeURIComponent(currentUser.name)}.json`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ candidate: event.candidate.toJSON(), ts: Date.now() })
+            body: JSON.stringify({ from: currentUser.name, candidate: event.candidate.toJSON(), ts: Date.now() })
           }, 4000).catch(() => {});
         }
       };
@@ -5543,7 +5570,7 @@
         if (!sigData || typeof sigData !== "object") return;
 
         let pc = activePeerConnections[peerName];
-        if (sigData.sdp && sigData.sdp.to && sigData.sdp.to.toLowerCase() === currentUser.name.toLowerCase()) {
+        if (sigData.sdp && isValidPeerSdpMessage(sigData.sdp, peerName, currentUser.name)) {
           if (sigData.sdp.type === "offer") {
             if (!pc) pc = await ensureWebRtcPeerConnection(peerName, false, needVideo);
             if (pc && pc.signalingState === "stable" && (!pc.__lastOfferTs || sigData.sdp.ts > pc.__lastOfferTs)) {
@@ -5573,10 +5600,21 @@
         const remoteIceBox = sigData["ice_" + peerName];
         if (pc && pc.remoteDescription && remoteIceBox && typeof remoteIceBox === "object") {
           if (!pc.__addedIceIds) pc.__addedIceIds = new Set();
+          const iceNow = Date.now();
           for (const [iceId, item] of Object.entries(remoteIceBox)) {
-            if (!pc.__addedIceIds.has(iceId) && item && item.candidate) {
+            if (pc.__addedIceIds.has(iceId) || !item || !item.candidate) continue;
+            const candidate = item.candidate;
+            const candidateText = typeof candidate.candidate === "string" ? candidate.candidate : null;
+            const candidateLooksValid = candidateText !== null && (candidateText === "" || /^candidate:/i.test(candidateText));
+            const itemTs = Number(item.ts);
+            const itemIsFresh = Number.isFinite(itemTs) && itemTs <= iceNow + 5000 && iceNow - itemTs >= 0 && iceNow - itemTs <= 120000;
+            const senderMatches = !item.from || (typeof item.from === "string" && item.from.toLowerCase() === peerName.toLowerCase());
+            if (!candidateLooksValid || !itemIsFresh || !senderMatches) continue;
+            try {
+              await pc.addIceCandidate(candidate);
               pc.__addedIceIds.add(iceId);
-              try { await pc.addIceCandidate(item.candidate); } catch (e) {}
+            } catch (_error) {
+              // Leave failed candidates unmarked so a later poll can retry them.
             }
           }
         }
@@ -5761,7 +5799,7 @@
         const now = Date.now();
         for (const [cId, call] of Object.entries(data)) {
           if (!call || typeof call !== "object") continue;
-          if (call.callee?.toLowerCase() === currentUser.name.toLowerCase() && call.state === "calling" && (now - call.ts < 35000)) {
+          if (isValidIncomingDmCall(call, cId, currentUser.name, now)) {
             if (!activeDmCall || activeDmCall.callId !== cId) {
               activeDmCall = { peer: call.caller, type: call.type, isCaller: false, state: "calling", callId: cId };
               const incModal = document.getElementById("incomingCallModal");

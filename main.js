@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');
+const { fileURLToPath } = require('url');
 const { EventEmitter } = require('events');
 
 // В режиме автотестов (MARKENS_TEST_MODE=1) не требуем бинарник electron, чтобы проверять логику через Node.js
@@ -15,6 +16,7 @@ const {
   nativeImage,
   session,
   desktopCapturer,
+  dialog,
   ipcMain,
   shell
 } = electronModule;
@@ -42,6 +44,48 @@ const BUNDLED_VERSION = readBundledVersion();
 const GITHUB_RELEASES_URL = 'https://github.com/marksambor0-hue/markensmasanger/releases/latest';
 const ALLOWED_PERMISSIONS = new Set(['media', 'display-capture', 'notifications', 'fullscreen']);
 const UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000; // 15 минут
+
+// A file:// URL alone is not trusted: only the real app entry page may request permissions.
+function isTrustedAppUrl(rawUrl) {
+  if (typeof rawUrl !== 'string' || !rawUrl) return false;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'file:') return false;
+    return path.resolve(fileURLToPath(parsed)) === path.resolve(__dirname, 'index.html');
+  } catch (_error) {
+    return false;
+  }
+}
+
+function getWebContentsUrl(webContents) {
+  try {
+    return webContents && typeof webContents.getURL === 'function' ? webContents.getURL() : '';
+  } catch (_error) {
+    return '';
+  }
+}
+
+function isAllowedPermissionRequest(webContents, permission, requestingUrl) {
+  if (!ALLOWED_PERMISSIONS.has(permission)) return false;
+  const topLevelUrl = getWebContentsUrl(webContents);
+  if (!isTrustedAppUrl(topLevelUrl)) return false;
+  const originUrl = typeof requestingUrl === 'string' && requestingUrl ? requestingUrl : topLevelUrl;
+  return isTrustedAppUrl(originUrl);
+}
+
+function isAllowedPermissionCheck(webContents, permission, requestingOrigin, details = {}) {
+  if (!ALLOWED_PERMISSIONS.has(permission) || !webContents) return false;
+  if (details && details.isMainFrame === false) return false;
+  if (!isTrustedAppUrl(getWebContentsUrl(webContents))) return false;
+  if (typeof details.requestingUrl === 'string' && details.requestingUrl) {
+    return isTrustedAppUrl(details.requestingUrl);
+  }
+  try {
+    return new URL(String(requestingOrigin || '')).protocol === 'file:';
+  } catch (_error) {
+    return false;
+  }
+}
 
 if (app && typeof app.setAppUserModelId === 'function') {
   app.setAppUserModelId('com.markens.messenger');
@@ -335,6 +379,9 @@ if (IS_TEST_MODE) {
     compareVersions,
     normalizeVersionTag,
     formatUpdaterError,
+    isTrustedAppUrl,
+    isAllowedPermissionRequest,
+    isAllowedPermissionCheck,
     BUNDLED_VERSION,
     GITHUB_RELEASES_URL
   };
@@ -405,28 +452,66 @@ if (IS_TEST_MODE) {
       mainWindow.show();
     });
 
-    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-      const url = webContents ? webContents.getURL() : '';
-      const isTrustedLocal = url.startsWith('file://') || url === 'about:blank';
-      callback(isTrustedLocal && ALLOWED_PERMISSIONS.has(permission));
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      const requestingUrl = details && typeof details.requestingUrl === 'string' ? details.requestingUrl : '';
+      callback(isAllowedPermissionRequest(webContents, permission, requestingUrl));
     });
 
-    session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
-      return ALLOWED_PERMISSIONS.has(permission);
+    session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+      return isAllowedPermissionCheck(webContents, permission, requestingOrigin, details || {});
     });
 
-    session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
-      desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
-        if (sources && sources.length > 0) {
-          callback({ video: sources[0], audio: 'loopback' });
-        } else {
-          callback({});
+    // Do not grant screen capture to the first enumerated source automatically.
+    // Require the trusted main frame, a user gesture, and an explicit source choice.
+    session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+      try {
+        const frame = request && request.frame;
+        if (!frame || frame !== frame.top || !isTrustedAppUrl(frame.url) || request.userGesture !== true) {
+          callback(null);
+          return;
         }
-      }).catch(() => callback({}));
+
+        const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+        if (!sources || sources.length === 0 || !mainWindow || mainWindow.isDestroyed()) {
+          callback(null);
+          return;
+        }
+
+        const cancelIndex = sources.length;
+        const choices = sources.map((source, index) => String(index + 1) + '. ' + source.name);
+        choices.push('Отмена');
+        const result = await dialog.showMessageBox(mainWindow, {
+          type: 'question',
+          title: 'Демонстрация экрана MARKENS',
+          message: 'Выбери, чем поделиться с собеседниками',
+          detail: request.audioRequested
+            ? 'При выборе источника также может передаваться системный звук, запрошенный в окне демонстрации.'
+            : 'Передача начнётся только после выбора экрана или окна.',
+          buttons: choices,
+          defaultId: cancelIndex,
+          cancelId: cancelIndex,
+          noLink: true
+        });
+
+        const selectedSource = result && Number.isInteger(result.response) && result.response >= 0 && result.response < sources.length
+          ? sources[result.response]
+          : null;
+        if (!selectedSource) {
+          callback(null);
+          return;
+        }
+
+        const selectedStreams = { video: selectedSource };
+        if (request.audioRequested) selectedStreams.audio = 'loopback';
+        callback(selectedStreams);
+      } catch (error) {
+        console.warn('Screen capture request was denied or cancelled:', error && error.message ? error.message : error);
+        callback(null);
+      }
     });
 
     mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
-      if (!targetUrl.startsWith('file://')) {
+      if (!isTrustedAppUrl(targetUrl)) {
         event.preventDefault();
         if (/^https?:\/\//i.test(targetUrl)) {
           shell.openExternal(targetUrl).catch(() => {});

@@ -14,7 +14,10 @@ const {
   parseSemVer,
   compareVersions,
   normalizeVersionTag,
-  formatUpdaterError
+  formatUpdaterError,
+  isTrustedAppUrl,
+  isAllowedPermissionRequest,
+  isAllowedPermissionCheck
 } = require(path.join(root, 'main.js'));
 
 const tests = [];
@@ -58,6 +61,40 @@ test('cloud OTA rewrites CURRENT_SCRIPT_TS and keeps app/release versions in syn
     'const CURRENT_SCRIPT_TS = 456;'
   );
   assert.equal(updated, 'const CURRENT_SCRIPT_TS = 456;');
+});
+
+test('Electron permissions require the exact local app entry page', () => {
+  const { pathToFileURL } = require('node:url');
+  const appUrl = pathToFileURL(path.join(root, 'index.html')).href;
+  const otherFileUrl = pathToFileURL(path.join(root, 'other.html')).href;
+  const trustedContents = { getURL: () => appUrl };
+  const untrustedContents = { getURL: () => 'https://example.invalid/' };
+
+  assert.equal(isTrustedAppUrl(appUrl), true);
+  assert.equal(isTrustedAppUrl(otherFileUrl), false);
+  assert.equal(isTrustedAppUrl('about:blank'), false);
+  assert.equal(isTrustedAppUrl('https://example.invalid/'), false);
+  assert.equal(isAllowedPermissionRequest(trustedContents, 'media', appUrl), true);
+  assert.equal(isAllowedPermissionRequest(trustedContents, 'media', 'https://example.invalid/'), false);
+  assert.equal(isAllowedPermissionRequest(trustedContents, 'clipboard-read', appUrl), false);
+  assert.equal(isAllowedPermissionRequest(untrustedContents, 'media', appUrl), false);
+  assert.equal(isAllowedPermissionRequest(null, 'media', appUrl), false);
+  assert.equal(isAllowedPermissionCheck(trustedContents, 'media', 'file://', { requestingUrl: appUrl, isMainFrame: true }), true);
+  assert.equal(isAllowedPermissionCheck(trustedContents, 'media', 'https://example.invalid', { requestingUrl: 'https://example.invalid/', isMainFrame: false }), false);
+  assert.equal(isAllowedPermissionCheck(trustedContents, 'media', 'file://', { requestingUrl: otherFileUrl, isMainFrame: true }), false);
+  assert.equal(isAllowedPermissionCheck(null, 'notifications', 'file://', {}), false);
+});
+
+test('call/signaling guards are present and screen capture requires a user-selected source', () => {
+  const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(mainSource, /request\.userGesture !== true/);
+  assert.match(mainSource, /dialog\.showMessageBox\(mainWindow/);
+  assert.match(mainSource, /callback\(null\)/);
+  assert.match(html, /isValidIncomingDmCall\(call, cId, currentUser\.name, now\)/);
+  assert.match(html, /isValidPeerSdpMessage\(sigData\.sdp, peerName, currentUser\.name\)/);
+  assert.match(html, /itemIsFresh/);
+  assert.match(html, /senderMatches/);
 });
 
 test('semantic version parser accepts the app version format', () => {
