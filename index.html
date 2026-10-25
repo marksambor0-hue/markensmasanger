@@ -2963,80 +2963,34 @@
             <div id="htmlDownloadFeedback" style="display:none;font-size:0.84rem;font-weight:700;padding:8px 12px;border-radius:6px;background:#1e1f22;border:1px solid var(--divider);"></div>
           </div>
 
-          <!-- CARD 2.5: GITHUB REPOSITORY, WINDOWS .EXE RELEASES & SOURCE FILES HUB -->
-          <div style="background:#2b2d31;border:2px solid #8b5cf6;border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:14px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-              <div style="display:flex;align-items:center;gap:12px;">
-                <div style="width:44px;height:44px;border-radius:12px;background:#8b5cf6;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.25rem;flex-shrink:0;">🐙</div>
-                <div>
-                  <div style="font-weight:800;color:#fff;font-size:1.05rem;">Центр GitHub, Windows .EXE и файлов проекта</div>
-                  <div style="font-size:0.82rem;color:var(--text-muted);">Единая панель: где скачивать готовый MARKENS_Setup.exe, запускать сборку и управлять файлами</div>
-                </div>
-              </div>
-              <span class="voice-ping-badge" style="color:#ddd6fe;background:rgba(139,92,246,0.22);">GitHub Actions x64</span>
-            </div>
-
-            <div style="background:#1e1f22;border:1px solid var(--divider);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;font-size:0.84rem;color:var(--text-header);line-height:1.5;">
-              <div><b>Где всё находится и как управлять:</b></div>
-              <div>• <b>GitHub Releases (Скачать .EXE):</b> раздел <code>/releases</code> вашего репозитория — отсюда в 1 клик скачиваются готовые <b>MARKENS_Setup_30.1.0.exe</b> и <b>MARKENS_Portable_30.1.0.exe</b>.</div>
-              <div>• <b>GitHub Actions (Авто-сборка Windows):</b> раздел <code>/actions</code> — облачный сервер Windows 10/11 сам собирает <code>.exe</code> при каждом обновлении файлов или по кнопке <i>Run workflow</i>.</div>
-              <div>• <b>Файлы мессенджера (Code):</b> корень вашего репозитория в GitHub, где лежат <code>index.html</code>, <code>main.js</code>, <code>preload.js</code>, <code>package.json</code> и <code>.github/workflows/build-windows.yml</code>.</div>
-            </div>
-
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-              <input id="inpGithubRepoUrl" type="text" placeholder="Ссылка на ваш GitHub (например: https://github.com/markens/markens)" style="flex:1;min-width:240px;background:#1e1f22;border:1px solid var(--divider);border-radius:8px;padding:10px 12px;color:#fff;font-size:0.85rem;" />
-              <button id="btnSaveGithubRepoUrl" style="background:#8b5cf6;color:#fff;border:none;padding:10px 16px;border-radius:8px;font-weight:700;font-size:0.84rem;cursor:pointer;">💾 Сохранить репозиторий</button>
-            </div>
-
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;">
-              <button id="btnOpenGhReleases" style="background:var(--green-btn);color:#fff;border:none;padding:11px 14px;border-radius:8px;font-weight:800;font-size:0.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
-                <span>📦</span><span>Скачать .EXE (GitHub Releases)</span>
-              </button>
-              <button id="btnOpenGhActions" style="background:var(--brand);color:#fff;border:none;padding:11px 14px;border-radius:8px;font-weight:800;font-size:0.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
-                <span>⚙️</span><span>Сборка .EXE (GitHub Actions)</span>
-              </button>
-              <button id="btnOpenGhCode" style="background:#383a40;color:#fff;border:1px solid var(--divider);padding:11px 14px;border-radius:8px;font-weight:700;font-size:0.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
-                <span>📁</span><span>Файлы в GitHub (Code)</span>
-              </button>
-              <button id="btnOpenNetlifySite" style="background:#383a40;color:#fff;border:1px solid var(--divider);padding:11px 14px;border-radius:8px;font-weight:700;font-size:0.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
-                <span>🌐</span><span>Открыть веб-версию (Netlify)</span>
-              </button>
-            </div>
-
-            <div style="background:#1e1f22;border:1px solid var(--divider);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
-              <div style="font-size:0.8rem;font-weight:700;color:var(--text-muted);">📥 Скачать отдельные файлы сборки для GitHub прямо отсюда:</div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button type="button" class="btn-dl-proj-file" data-projfile="package.json" style="background:#2b2d31;color:#fff;border:1px solid var(--divider);padding:7px 12px;border-radius:6px;font-size:0.78rem;font-weight:700;cursor:pointer;">📄 package.json</button>
-                <button type="button" class="btn-dl-proj-file" data-projfile="main.js" style="background:#2b2d31;color:#fff;border:1px solid var(--divider);padding:7px 12px;border-radius:6px;font-size:0.78rem;font-weight:700;cursor:pointer;">⚙️ main.js</button>
-                <button type="button" class="btn-dl-proj-file" data-projfile="preload.js" style="background:#2b2d31;color:#fff;border:1px solid var(--divider);padding:7px 12px;border-radius:6px;font-size:0.78rem;font-weight:700;cursor:pointer;">🛡️ preload.js</button>
-                <button type="button" class="btn-dl-proj-file" data-projfile="build-windows.yml" style="background:#2b2d31;color:#fff;border:1px solid var(--divider);padding:7px 12px;border-radius:6px;font-size:0.78rem;font-weight:700;cursor:pointer;">🤖 build-windows.yml</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- CARD 3: REAL SYNC & VERSION DIAGNOSTICS (9 DETAILED LINES) -->
+          <!-- CARD 3: REAL SYNC & VERSION DIAGNOSTICS (GITHUB RELEASES & ELECTRON-UPDATER) -->
           <div style="background:#2b2d31;border:1px solid rgba(79,70,229,0.6);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:12px;">
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
               <div>
-                <div style="font-weight:800;color:var(--text-header);font-size:1rem;">📊 Диагностика синхронизации и версий (Netlify / Браузер / Firebase)</div>
-                <div style="font-size:0.78rem;color:var(--text-muted);">Реальный мониторинг исходной сборки, памяти браузера и опубликованного облачного релиза</div>
+                <div style="font-weight:800;color:var(--text-header);font-size:1rem;">📊 Диагностика автообновления (electron-updater + GitHub Releases)</div>
+                <div style="font-size:0.78rem;color:var(--text-muted);">Проверка официальных сборок Windows (.exe) и контрольных сумм SHA-512 из репозитория GitHub</div>
               </div>
-              <button id="btnRunSyncDiagnostics" style="background:var(--brand);color:#fff;border:none;padding:8px 16px;border-radius:6px;font-weight:700;font-size:0.84rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(79,70,229,0.4);">
-                <span>🔄</span><span>Проверить синхронизацию</span>
-              </button>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button id="btnRunSyncDiagnostics" style="background:var(--brand);color:#fff;border:none;padding:8px 16px;border-radius:6px;font-weight:700;font-size:0.84rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(79,70,229,0.4);">
+                  <span>🔄</span><span>Проверить обновления</span>
+                </button>
+                <button id="btnRollbackAppVersion" style="background:#383a40;color:#c7d2fe;border:1px solid rgba(79,70,229,0.45);padding:8px 14px;border-radius:6px;font-weight:700;font-size:0.82rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Открыть официальные релизы GitHub для ручного восстановления, если обновление не удалось">
+                  <span>📥</span><span>Открыть GitHub Releases</span>
+                </button>
+              </div>
             </div>
 
             <div style="background:#1e1f22;border:1px solid var(--divider);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;font-size:0.83rem;line-height:1.45;">
               <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #262932;padding-bottom:6px;flex-wrap:wrap;gap:4px;">
-                <span style="color:var(--text-muted);">1. Версия HTML, первоначально полученного с Netlify:</span>
-                <b style="color:#fff;" id="syncDiag_originVer">v30.1</b>
+                <span style="color:var(--text-muted);">1. Установленная версия пакета (app.asar):</span>
+                <b style="color:#fff;" id="syncDiag_originVer">v30.1.0</b>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #262932;padding-bottom:6px;flex-wrap:wrap;gap:4px;">
-                <span style="color:var(--text-muted);">2. Версия активного кода в браузере (Runtime):</span>
-                <b style="color:var(--green);" id="syncDiag_activeVer">v30.1 (активен)</b>
+                <span style="color:var(--text-muted);">2. Активный режим запуска (Runtime):</span>
+                <b style="color:var(--green);" id="syncDiag_activeVer">v30.1.0 (защищённый пакет)</b>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #262932;padding-bottom:6px;flex-wrap:wrap;gap:4px;">
-                <span style="color:var(--text-muted);">3. Последняя опубликованная версия в Firebase:</span>
+                <span style="color:var(--text-muted);">3. Последний релиз в GitHub Releases:</span>
                 <b style="color:#6ee7b7;" id="syncDiag_firebaseVer">Ожидание проверки...</b>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #262932;padding-bottom:6px;flex-wrap:wrap;gap:4px;">
@@ -3044,19 +2998,19 @@
                 <span style="color:var(--text-header);" id="syncDiag_lastCheckTime">Не выполнялась</span>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #262932;padding-bottom:6px;flex-wrap:wrap;gap:4px;">
-                <span style="color:var(--text-muted);">5. Время последней успешной публикации:</span>
-                <span style="color:var(--text-header);" id="syncDiag_lastPublishTime">Не публиковалось в этой сессии</span>
+                <span style="color:var(--text-muted);">5. Дата публикации релиза на GitHub:</span>
+                <span style="color:var(--text-header);" id="syncDiag_lastPublishTime">Не проверялась</span>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #262932;padding-bottom:6px;flex-wrap:wrap;gap:4px;">
-                <span style="color:var(--text-muted);">6. Результат скачивания HTML:</span>
-                <span style="color:var(--text-header);" id="syncDiag_downloadResult">Файл готов к скачиванию</span>
+                <span style="color:var(--text-muted);">6. Статус загрузки установщика:</span>
+                <span style="color:var(--text-header);" id="syncDiag_downloadResult">Ожидание новой версии</span>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #262932;padding-bottom:6px;flex-wrap:wrap;gap:4px;">
-                <span style="color:var(--text-muted);">7. Результат проверки подписи и целостности:</span>
-                <span style="color:var(--text-header);" id="syncDiag_integrityResult">Локальная сборка верифицирована</span>
+                <span style="color:var(--text-muted);">7. Механизм защиты и целостности:</span>
+                <span style="color:var(--text-header);" id="syncDiag_integrityResult">✓ SHA-512 (latest.yml) • Выполнение HTML из Firebase отключено</span>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #262932;padding-bottom:6px;flex-wrap:wrap;gap:4px;">
-                <span style="color:var(--text-muted);">8. Результат применения обновления:</span>
+                <span style="color:var(--text-muted);">8. Статус службы electron-updater:</span>
                 <span style="color:var(--text-header);" id="syncDiag_applyResult">Приложение запущено в штатном режиме</span>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">
@@ -3115,42 +3069,27 @@
             </div>
           </div>
 
-          <div style="background:#2b2d31;border:2px solid var(--brand);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:12px;">
+          <div style="background:#2b2d31;border:1px solid var(--brand);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:12px;">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
               <div>
-                <div style="font-weight:800;color:var(--text-header);font-size:0.98rem;">🛡️ Центр контроля авто-обновлений (Раздача ТОЛЬКО после вашего подтверждения)</div>
-                <div style="font-size:0.8rem;color:#fbbf24;font-weight:700;margin-top:3px;" id="otaGateStatusSub">⏸️ Защита активна: обновления НЕ отправляются пользователям без вашего одобрения!</div>
+                <div style="font-weight:800;color:var(--text-header);font-size:0.96rem;">🚀 Центр обновлений Windows (electron-updater + GitHub Releases)</div>
+                <div style="font-size:0.78rem;color:var(--green);font-weight:600;margin-top:2px;">✅ Безопасное автообновление через GitHub Actions (без загрузки HTML из Firebase).</div>
               </div>
-              <span class="voice-ping-badge" id="lblCurrentAppVersion">Текущая: v30.1</span>
+              <span class="voice-ping-badge" id="lblCurrentAppVersion">Текущая: v30.1.0</span>
             </div>
 
-            <div style="background:#1e1f22;border:1px solid var(--divider);border-radius:8px;padding:12px 14px;font-size:0.82rem;color:var(--text-normal);line-height:1.5;display:flex;flex-direction:column;gap:6px;">
-              <div><b>1. Предпросмотр и проверка:</b> сначала проверьте новую версию по скриншоту, в предпросмотре или через кнопку <b>«🔔 Предпросмотр плашки (только у меня)»</b>.</div>
-              <div><b>2. Ваше подтверждение:</b> когда вам всё нравится, поставьте галочку подтверждения ниже и нажмите <b>«✅ Подтвердить и выложить обнову всем»</b> — только после этого релиз улетит в облако Firebase на все устройства.</div>
+            <div style="background:#1e1f22;border:1px solid var(--divider);border-radius:6px;padding:10px 12px;font-size:0.8rem;color:var(--text-normal);line-height:1.45;">
+              <div><b>Как работает обновление:</b> после отправки изменений в репозиторий <code>marksambor0-hue/markensmasanger</code> GitHub Actions автоматически собирает <code>MARKENS_Setup.exe</code> и <code>latest.yml</code> (с хешем SHA-512). Установленный MARKENS сам обнаруживает новую версию, скачивает её в фоне и показывает зелёную кнопку перезапуска.</div>
             </div>
 
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <input id="inpOtaVersion" type="text" value="v30.1" placeholder="Версия (напр. v30.2)" style="width:140px;background:#1e1f22;border:1px solid var(--divider);border-radius:6px;padding:8px 10px;color:#fff;font-weight:700;font-size:0.84rem;" />
-              <input id="inpOtaChangelog" type="text" value="Проверенное обновление интерфейса и синхронизации" placeholder="Что нового в этом обновлении..." style="flex:1;min-width:220px;background:#1e1f22;border:1px solid var(--divider);border-radius:6px;padding:8px 10px;color:#fff;font-size:0.84rem;" />
-              <input id="inpOtaPatch" type="hidden" value="" />
-            </div>
+            <input id="inpOtaVersion" type="hidden" value="v30.1.0" />
+            <input id="inpOtaChangelog" type="hidden" value="Обновление через GitHub Releases" />
 
-            <label style="display:flex;align-items:center;gap:10px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.4);padding:10px 12px;border-radius:8px;cursor:pointer;font-size:0.84rem;color:#fff;font-weight:700;">
-              <input type="checkbox" id="chkConfirmOtaTested" style="width:18px;height:18px;accent-color:#10b981;cursor:pointer;" />
-              <span>✅ Я проверил эту версию (мне нравится) — разрешаю раздать обновление всем устройствам</span>
-            </label>
-
-            <label style="display:flex;align-items:center;gap:10px;background:#1e1f22;border:1px solid var(--divider);padding:8px 12px;border-radius:8px;cursor:pointer;font-size:0.81rem;color:var(--text-header);">
-              <input type="checkbox" id="chkOtaAutoForce" checked style="width:16px;height:16px;accent-color:var(--brand);cursor:pointer;" />
-              <span>⚡ После моего подтверждения автоматически установить обновление у открытых клиентов (1 раз, без цикла)</span>
-            </label>
-
-            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:2px;">
-              <span style="font-size:0.78rem;color:var(--text-muted);">🔒 Вы управляете раздачей как <b>Создатель markens</b></span>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+              <span style="font-size:0.78rem;color:var(--text-muted);">🔒 Аккаунт <b>markens</b> запомнен на этом устройстве</span>
               <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button id="btnTestUpdateBannerLocal" style="background:#383a40;color:#fff;border:1px solid var(--divider);padding:9px 14px;border-radius:6px;font-size:0.8rem;font-weight:600;cursor:pointer;">🔔 Предпросмотр плашки (только у меня)</button>
-                <button id="btnStopCloudOta" style="background:rgba(239,68,68,0.18);color:#fca5a5;border:1px solid rgba(239,68,68,0.45);padding:9px 14px;border-radius:6px;font-size:0.8rem;font-weight:700;cursor:pointer;">🛑 Остановить раздачу в облаке</button>
-                <button id="btnPublishOta" style="background:var(--green-btn);color:#fff;border:none;padding:9px 18px;border-radius:6px;font-weight:800;font-size:0.85rem;cursor:pointer;box-shadow:0 4px 12px rgba(16,185,129,0.3);">✅ Подтвердить и выложить обнову всем</button>
+                <button id="btnTestUpdateBannerLocal" style="background:#383a40;color:#fff;border:none;padding:9px 14px;border-radius:6px;font-size:0.8rem;font-weight:600;cursor:pointer;">🔔 Проверить плашку</button>
+                <button id="btnPublishOta" style="background:var(--green-btn);color:#fff;border:none;padding:9px 18px;border-radius:6px;font-weight:700;font-size:0.84rem;cursor:pointer;">🔄 Проверить релиз на GitHub</button>
               </div>
             </div>
           </div>
@@ -3240,17 +3179,10 @@
       window.__pristineBuildTs = CURRENT_SCRIPT_TS;
     }
 
-    // 3. Bootloader Loop Guard: Purge stale/looping cached HTML & patches so the app never enters an infinite reload loop
+    // 3. Clean up any legacy cached HTML keys from older versions (HTML is never executed from storage)
     try {
-      const cachedHtml = localStorage.getItem("markens_cached_full_html_v25");
-      if (cachedHtml) {
-        const vMatch = cachedHtml.match(/CURRENT_SCRIPT_VERSION\s*=\s*["']([^"']+)["']/i);
-        const cachedVer = vMatch ? vMatch[1] : null;
-        if (!cachedVer || compareVersions(cachedVer, CURRENT_SCRIPT_VERSION) <= 0) {
-          localStorage.removeItem("markens_cached_full_html_v25");
-          localStorage.removeItem("markens_cached_full_html_ts");
-        }
-      }
+      localStorage.removeItem("markens_cached_full_html_v25");
+      localStorage.removeItem("markens_cached_full_html_ts");
       localStorage.removeItem("markens_cached_ota_patch");
     } catch (e) {}
 
@@ -3331,6 +3263,18 @@
     function computeOtaReleaseSignature(version, buildTs) {
       return computeSecuritySignature(`OTA_RELEASE::${version}::${Number(buildTs || 0)}`);
     }
+
+    async function computeSha256Browser(textStr) {
+      try {
+        if (window.crypto && window.crypto.subtle) {
+          const enc = new TextEncoder().encode(String(textStr || ""));
+          const hashBuf = await window.crypto.subtle.digest("SHA-256", enc);
+          return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
+        }
+      } catch (_e) {}
+      return "";
+    }
+    window.computeSha256Browser = computeSha256Browser;
 
     function hashUserPassword(login, rawPass) {
       return "mkhash_" + computeSecuritySignature(`AUTH::${String(login).toLowerCase().trim()}::${rawPass}`);
@@ -6321,86 +6265,34 @@ goto loop`;
     }
 
     // ========================================================
-    // STABLE CLOUD OTA UPDATER (v30.1 — ANTI-LOOP PROTECTED)
+    // OFFICIAL ELECTRON-UPDATER + GITHUB RELEASES CLIENT (v30.1)
+    // (Firebase HTML execution removed; Firebase is used strictly for messenger data)
     // ========================================================
-    window.MARKENS_DEFAULT_VERSION = window.MARKENS_BUILD_VERSION || "v30.1";
-    const savedVer = safeGet("markens_installed_version", window.MARKENS_DEFAULT_VERSION);
-    const savedTs = Number(safeGet("markens_installed_build_ts", String(window.MARKENS_BUILD_TS || 0)));
+    const GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/marksambor0-hue/markensmasanger/releases/latest";
+    const GITHUB_RELEASES_WEB_URL = "https://github.com/marksambor0-hue/markensmasanger/releases/latest";
 
-    if (compareVersions(window.MARKENS_BUILD_VERSION, savedVer) >= 0) {
-      window.__installedAppVersion = window.MARKENS_BUILD_VERSION;
-      window.__installedBuildTs = Math.max(window.MARKENS_BUILD_TS || 0, savedTs);
-      safeSet("markens_installed_version", window.__installedAppVersion);
-      safeSet("markens_installed_build_ts", String(window.__installedBuildTs));
-    } else {
-      window.__installedAppVersion = savedVer;
-      window.__installedBuildTs = savedTs;
-    }
+    const desktopReportedVer = (window.markensDesktop && window.markensDesktop.version)
+      ? ("v" + String(window.markensDesktop.version).replace(/^v/i, ""))
+      : CURRENT_SCRIPT_VERSION;
 
+    window.MARKENS_DEFAULT_VERSION = desktopReportedVer;
+    window.__installedAppVersion = desktopReportedVer;
+    window.MARKENS_ORIGIN_VERSION = desktopReportedVer;
+    window.MARKENS_ACTIVE_VERSION = desktopReportedVer;
     window.__pendingCloudRelease = null;
     window.__dismissedUpdateVer = safeGet("markens_dismissed_ota_ver", null);
-    window.__autoUpdateTimer = null;
-    window.__countdownInterval = null;
     window.__isUpdatingNow = false;
-    window.__isPushingBuildNow = false;
-    window.__lastCloudPushTs = 0;
-
-    function getAppliedOtaSig() {
-      return safeGet("markens_last_applied_ota_sig", "");
-    }
-    function markOtaSigApplied(ver, ts) {
-      const sig = `${ver || ""}__${Number(ts || 0)}`;
-      safeSet("markens_last_applied_ota_sig", sig);
-      try { sessionStorage.setItem("markens_last_applied_ota_sig", sig); } catch (e) {}
-    }
-    function isOtaSigAlreadyApplied(ver, ts) {
-      const sig = `${ver || ""}__${Number(ts || 0)}`;
-      try {
-        if (sessionStorage.getItem("markens_last_applied_ota_sig") === sig) return true;
-      } catch (e) {}
-      return getAppliedOtaSig() === sig;
-    }
 
     function updateLiveOtaPill(text, color) {
       const lblCurVer = document.getElementById("lblCurrentAppVersion");
       if (lblCurVer) lblCurVer.textContent = "Текущая: " + window.__installedAppVersion;
       const pill = document.getElementById("liveOtaStatusPill");
       if (pill) {
-        pill.textContent = text || (`🟢 ${window.__installedAppVersion} • Авто-OTA`);
+        pill.textContent = text || (`🟢 ${window.__installedAppVersion} • GitHub Auto-Update`);
         if (color) pill.style.color = color;
       }
     }
     updateLiveOtaPill();
-
-    const livePillEl = document.getElementById("liveOtaStatusPill");
-    if (livePillEl) {
-      livePillEl.onclick = () => {
-        updateLiveOtaPill("🔄 Проверка облака...", "#fbbf24");
-        checkAndApplyCloudOTA(true);
-      };
-    }
-
-    function isValidAppHtmlPayload(rawHtml) {
-      if (!rawHtml || typeof rawHtml !== "string") return false;
-      if (rawHtml.length < 5000) return false;
-      if (!rawHtml.includes("<html") || !rawHtml.includes("</html>") || !rawHtml.includes("MARKENS_BUILD_VERSION")) return false;
-      if (/<script[^>]+src=/i.test(rawHtml)) return false;
-      return true;
-    }
-
-    function isAuthenticOtaRelease(rel) {
-      if (!rel || typeof rel !== "object" || !rel.version) return false;
-      if (!rel.signature) {
-        updateSyncDiagField("integrityResult", "Отклонено: подпись/контрольная сумма отсутствует");
-        return false;
-      }
-      const expected = computeOtaReleaseSignature(rel.version, rel.buildTs);
-      if (rel.signature !== expected) {
-        updateSyncDiagField("integrityResult", "Отклонено: несовпадение контрольной суммы");
-        return false;
-      }
-      return true;
-    }
 
     function updateSyncDiagField(fieldKey, value) {
       const el = document.getElementById("syncDiag_" + fieldKey);
@@ -6413,101 +6305,13 @@ goto loop`;
     }
     window.updateSyncDiagField = updateSyncDiagField;
 
-    async function runSyncDiagnostics() {
-      const btn = document.getElementById("btnRunSyncDiagnostics");
-      if (btn) btn.textContent = "Проверка...";
-      const nowStr = new Date().toLocaleTimeString("ru-RU");
-      updateSyncDiagField("lastCheckTime", nowStr);
-      updateSyncDiagField("originVer", window.MARKENS_ORIGIN_VERSION || CURRENT_SCRIPT_VERSION);
-      updateSyncDiagField("activeVer", (window.MARKENS_ACTIVE_VERSION || CURRENT_SCRIPT_VERSION) + " (активен)");
-
-      try {
-        const res = await fetchWithTimeout(`${DB_URL}/ota_update.json?t=${Date.now()}`, { cache: "no-store" }, 6000);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText || "Сбой связи с базой"}`);
-        }
-        const ota = await res.json();
-        if (!ota || typeof ota !== "object" || !ota.version) {
-          updateSyncDiagField("firebaseVer", "Нет данных в базе (null)");
-          updateSyncDiagField("integrityResult", "Подпись отсутствует (нет релиза в базе)");
-          updateSyncDiagField("lastError", "В Firebase отсутствует объект ota_update.json");
-        } else {
-          updateSyncDiagField("firebaseVer", `${ota.version} (ts: ${ota.buildTs || "нет ts"})`);
-          if (ota.ts) {
-            updateSyncDiagField("lastPublishTime", new Date(ota.ts).toLocaleTimeString("ru-RU") + " " + new Date(ota.ts).toLocaleDateString("ru-RU"));
-          }
-          if (!ota.signature) {
-            updateSyncDiagField("integrityResult", "⚠️ Внимание: контрольная сумма отсутствует");
-            updateSyncDiagField("lastError", "Облачный релиз не содержит контрольную сумму (signature)");
-          } else {
-            const expected = computeOtaReleaseSignature(ota.version, ota.buildTs);
-            if (ota.signature === expected) {
-              updateSyncDiagField("integrityResult", "✓ Контрольная сумма релиза подтверждена");
-              updateSyncDiagField("lastError", "Ошибок нет");
-            } else {
-              updateSyncDiagField("integrityResult", "❌ Несовпадение контрольной суммы релиза!");
-              updateSyncDiagField("lastError", "Контрольная сумма релиза не совпала с вычисленной");
-            }
-          }
-
-          const cmp = compareVersions(ota.version, window.__installedAppVersion);
-          if (cmp > 0) {
-            updateSyncDiagField("applyResult", `Доступна более новая версия ${ota.version} в Firebase`);
-          } else if (cmp === 0) {
-            updateSyncDiagField("applyResult", `✓ Версия в браузере актуальна (${window.__installedAppVersion})`);
-          } else {
-            updateSyncDiagField("applyResult", `Текущая версия ${window.__installedAppVersion} новее облачной ${ota.version}`);
-          }
-        }
-      } catch (err) {
-        const errMsg = (err && err.name === "AbortError")
-          ? "Таймаут соединения с Firebase (6 сек)"
-          : (err && err.message ? err.message : "Ошибка сети");
-        updateSyncDiagField("firebaseVer", "Нет данных (ошибка сети)");
-        updateSyncDiagField("integrityResult", "Проверка невозможна (нет связи)");
-        updateSyncDiagField("lastError", errMsg);
-      } finally {
-        if (btn) btn.innerHTML = `<span>🔄</span><span>Проверить синхронизацию</span>`;
-      }
-    }
-
-    function saveReleaseToIndexedDB(rel) {
-      try {
-        if (!window.indexedDB || !rel || !isValidAppHtmlPayload(rel.fullHtml)) return;
-        const req = window.indexedDB.open("markens_ota_db_v25", 1);
-        req.onupgradeneeded = (e) => {
-          const db = e.target.result;
-          if (!db.objectStoreNames.contains("releases")) {
-            db.createObjectStore("releases", { keyPath: "id" });
-          }
-        };
-        req.onsuccess = (e) => {
-          try {
-            const db = e.target.result;
-            const tx = db.transaction("releases", "readwrite");
-            tx.objectStore("releases").put({
-              id: "latest",
-              version: rel.version,
-              buildTs: Number(rel.buildTs || Date.now()),
-              changelog: rel.changelog || "",
-              fullHtml: rel.fullHtml
-            });
-          } catch (err) {}
-        };
-      } catch (e) {}
-    }
-
-    function checkIndexedDBForNewerReleaseOnBoot() {
-      // Disabled automatic boot restart to prevent infinite update loops
-    }
-
-    function cacheFullHtmlSafely(fullHtml, buildTs) {
-      if (!isValidAppHtmlPayload(fullHtml)) return;
-      try {
-        localStorage.setItem("markens_cached_full_html_v25", fullHtml);
-        localStorage.setItem("markens_cached_full_html_ts", String(buildTs));
-      } catch (e) {}
-    }
+    updateSyncDiagField("originVer", window.__installedAppVersion);
+    updateSyncDiagField(
+      "activeVer",
+      window.markensDesktop
+        ? `${window.__installedAppVersion} (Electron app.asar • Защищено)`
+        : `${window.__installedAppVersion} (Веб-версия браузера)`
+    );
 
     function saveUiStateBeforeUpdate(targetVer) {
       try {
@@ -6532,7 +6336,7 @@ goto loop`;
         if (!raw) return;
         safeRemove("markens_update_restore_state");
         const st = JSON.parse(raw);
-        if (!st || (Date.now() - (st.ts || 0) > 60000)) return;
+        if (!st || (Date.now() - (st.ts || 0) > 120000)) return;
 
         if (st.isServerMode) {
           guildBtnVortex.click();
@@ -6545,440 +6349,215 @@ goto loop`;
         }
         if (st.targetVer) {
           setTimeout(() => {
-            showLevelUpToast(st.targetVer, "Обновление завершено! Чат и черновик сохранены.");
-          }, 200);
+            showLevelUpToast(st.targetVer, "Приложение успешно обновлено! Открытый чат сохранён.");
+          }, 250);
         }
       } catch (e) {}
     }
 
-    async function autoSyncBuildToCloud(manualPush = false) {
-      // Only push when explicitly requested by the creator, never automatically on page load
-      if (!manualPush) {
-        updateLiveOtaPill(`🟢 ${window.__installedAppVersion} • Авто-OTA`, "#10b981");
-        return;
-      }
-      if (window.__isPushingBuildNow) return;
-      window.__isPushingBuildNow = true;
-      try {
-        if (!verifyCreatorPrivilege()) return;
-        updateLiveOtaPill(`☁️ Выгрузка ${window.MARKENS_BUILD_VERSION}...`, "#fbbf24");
-        const cleanHtml = window.__pristineBuildHtml || ("<!DOCTYPE html>\n" + document.documentElement.outerHTML);
-        const nowTs = Date.now();
-        const releasePayload = {
-          version: window.MARKENS_BUILD_VERSION,
-          buildTs: nowTs,
-          signature: computeOtaReleaseSignature(window.MARKENS_BUILD_VERSION, nowTs),
-          changelog: window.MARKENS_BUILD_CHANGELOG || "Обновление мессенджера",
-          js: "",
-          autoForce: false,
-          updatedBy: "markens",
-          ts: nowTs
-        };
-        const r1 = await fetch(`${DB_URL}/app_releases_v25/latest.json`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...releasePayload, fullHtml: cleanHtml })
-        });
-        const r2 = await fetch(`${DB_URL}/ota_update.json`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(releasePayload)
-        });
-        if (r1.ok && r2.ok) {
-          markOtaSigApplied(window.MARKENS_BUILD_VERSION, nowTs);
-          updateLiveOtaPill(`✅ ${window.MARKENS_BUILD_VERSION} в облаке`, "#10b981");
-        }
-      } catch (e) {
-      } finally {
-        window.__isPushingBuildNow = false;
-      }
-    }
-
-    function performSelfUpdateAndRestart(releaseObj) {
-      if (window.__isUpdatingNow) return;
-      const rel = releaseObj || window.__pendingCloudRelease;
-      if (!rel || !rel.version) return;
-
-      // Prevent applying the exact same update twice
-      if (isOtaSigAlreadyApplied(rel.version, rel.buildTs)) {
-        const banner = document.getElementById("appUpdateBanner");
-        if (banner) banner.style.display = "none";
-        updateLiveOtaPill(`🟢 ${window.__installedAppVersion} • Актуально`, "#10b981");
-        return;
-      }
-
-      window.__isUpdatingNow = true;
-      if (window.__autoUpdateTimer) { clearTimeout(window.__autoUpdateTimer); window.__autoUpdateTimer = null; }
-      if (window.__countdownInterval) { clearInterval(window.__countdownInterval); window.__countdownInterval = null; }
-
-      const overlay = document.getElementById("appUpdatingOverlay");
-      const bar = document.getElementById("updOverlayBar");
-      const title = document.getElementById("updOverlayTitle");
-      const desc = document.getElementById("updOverlayDesc");
-      const banner = document.getElementById("appUpdateBanner");
-      if (banner) banner.style.display = "none";
-      if (overlay) overlay.style.display = "flex";
-      if (title) title.textContent = `Обновление markens до ${rel.version}...`;
-      if (desc) desc.textContent = rel.changelog || "Загрузка новой версии...";
-
-      playSound("join");
-      setTimeout(() => { if (bar) bar.style.width = "45%"; }, 50);
-
-      setTimeout(async () => {
-        if (bar) bar.style.width = "85%";
-        if (desc) desc.textContent = "Проверка целостности и сохранение открытого чата...";
-
-        if (!isValidAppHtmlPayload(rel.fullHtml)) {
-          try {
-            const fullRes = await fetchWithTimeout(`${DB_URL}/app_releases_v25/latest.json?t=${Date.now()}`, { cache: "no-store" }, 6000);
-            if (fullRes.ok) {
-              const fullData = await fullRes.json();
-              if (fullData && isValidAppHtmlPayload(fullData.fullHtml)) {
-                rel.fullHtml = fullData.fullHtml;
-              }
-            }
-          } catch (e) {}
-        }
-
-        const newTs = Number(rel.buildTs || Date.now());
-        markOtaSigApplied(rel.version, newTs);
-        window.__installedAppVersion = rel.version;
-        window.MARKENS_ACTIVE_VERSION = rel.version;
-        window.__installedBuildTs = newTs;
-        safeSet("markens_installed_version", rel.version);
-        safeSet("markens_installed_build_ts", String(newTs));
-        updateSyncDiagField("activeVer", `${rel.version} (обновлен через OTA)`);
-        updateSyncDiagField("applyResult", `✓ Обновление до ${rel.version} успешно применено`);
-
-        if (isValidAppHtmlPayload(rel.fullHtml)) {
-          // Ensure the downloaded HTML has the updated version & buildTs embedded so it never triggers an update loop
-          let patchedHtml = rel.fullHtml
-            .replace(/const\s+CURRENT_SCRIPT_VERSION\s*=\s*["'][^"']+["']\s*;/, `const CURRENT_SCRIPT_VERSION = "${rel.version}";`)
-            .replace(/const\s+CURRENT_SCRIPT_TS\s*=\s*\d+\s*;/, `const CURRENT_SCRIPT_TS = ${newTs};`);
-          rel.fullHtml = patchedHtml;
-          cacheFullHtmlSafely(patchedHtml, newTs);
-          saveReleaseToIndexedDB(rel);
-        }
-
-        if (rel.css) {
-          let st = document.getElementById("otaLiveCss");
-          if (!st) { st = document.createElement("style"); st.id = "otaLiveCss"; document.head.appendChild(st); }
-          st.textContent = rel.css;
-        }
-
-        if (bar) bar.style.width = "100%";
-        if (title) title.textContent = `✓ Обновлено до ${rel.version}!`;
-
-        setTimeout(() => {
-          saveUiStateBeforeUpdate(rel.version);
-          window.__isUpdatingNow = false;
-          if (overlay) overlay.style.display = "none";
-          if (bar) bar.style.width = "0%";
-          updateLiveOtaPill(`🟢 ${window.__installedAppVersion} • Авто-OTA`, "#10b981");
-
-          if (window.markensDesktop && window.markensDesktop.applyUpdateAndRestart) {
-            window.markensDesktop.applyUpdateAndRestart({
-              version: rel.version,
-              buildTs: newTs,
-              changelog: rel.changelog || ""
-            });
-          } else {
-            restoreUiStateAfterUpdate();
-          }
-        }, 500);
-      }, 400);
-    }
-
     function showUpdateNotificationBanner(rel) {
       if (!rel || !rel.version || window.__isUpdatingNow) return;
-      if (isOtaSigAlreadyApplied(rel.version, rel.buildTs)) return;
-      if (window.__dismissedUpdateVer === rel.version) return;
-      if (window.__pendingCloudRelease && window.__pendingCloudRelease.version === rel.version && document.getElementById("appUpdateBanner")?.style.display === "flex") {
-        return;
-      }
+      if (compareVersions(rel.version, window.__installedAppVersion) <= 0 && !rel.isTestPreview) return;
+      if (window.__dismissedUpdateVer === rel.version && !rel.isTestPreview) return;
+
       window.__pendingCloudRelease = rel;
       const banner = document.getElementById("appUpdateBanner");
       const verEl = document.getElementById("updBannerVer");
       const txtEl = document.getElementById("updBannerText");
+      const applyBtn = document.getElementById("btnApplyAppUpdateNow");
       if (!banner) return;
 
       if (verEl) verEl.textContent = rel.version;
       const note = rel.changelog ? ` — «${rel.changelog}»` : "";
       updateLiveOtaPill(`🚀 Доступна ${rel.version}`, "#fbbf24");
 
-      if (txtEl) txtEl.textContent = `🚀 Доступна проверенная версия markens ${rel.version}${note}! Нажмите «Обновить», чтобы применить.`;
-      banner.style.display = "flex";
-      // Only auto-apply if explicitly confirmed by Creator with autoForce=true AND never applied before on this client
-      if (rel.confirmedByCreator === true && rel.autoForce === true && !isOtaSigAlreadyApplied(rel.version, rel.buildTs)) {
-        if (window.__autoUpdateTimer) clearTimeout(window.__autoUpdateTimer);
-        window.__autoUpdateTimer = setTimeout(() => {
-          if (!isOtaSigAlreadyApplied(rel.version, rel.buildTs)) {
-            performSelfUpdateAndRestart(rel);
-          }
-        }, 1800);
+      if (rel.isDownloadedInstaller) {
+        if (txtEl) txtEl.textContent = `🚀 Обновление MARKENS ${rel.version} скачано и проверено (SHA-512)! Нажмите, чтобы установить и перезапустить.`;
+        if (applyBtn) applyBtn.textContent = "⚡ Обновить и перезапустить";
+      } else {
+        if (txtEl) txtEl.textContent = `🚀 Доступен новый релиз MARKENS ${rel.version}${note}!`;
+        if (applyBtn) applyBtn.textContent = window.markensDesktop ? "⚡ Установить обновление" : "📥 Скачать установщик";
       }
+      banner.style.display = "flex";
+    }
+
+    async function performSelfUpdateAndRestart(releaseObj) {
+      if (window.__isUpdatingNow) return;
+      const rel = releaseObj || window.__pendingCloudRelease;
+      if (!rel || !rel.version) return;
+
+      const banner = document.getElementById("appUpdateBanner");
+      if (banner) banner.style.display = "none";
+
+      if (rel.isTestPreview && (!window.markensDesktop || !rel.isDownloadedInstaller)) {
+        showLevelUpToast(rel.version, "Тестовая плашка проверена! В реальном .exe здесь вызывается quitAndInstall().");
+        updateLiveOtaPill(`🟢 ${window.__installedAppVersion} • GitHub Auto-Update`, "#10b981");
+        return;
+      }
+
+      if (window.markensDesktop && typeof window.markensDesktop.installUpdateNow === "function") {
+        window.__isUpdatingNow = true;
+        saveUiStateBeforeUpdate(rel.version);
+
+        const overlay = document.getElementById("appUpdatingOverlay");
+        const bar = document.getElementById("updOverlayBar");
+        const title = document.getElementById("updOverlayTitle");
+        const desc = document.getElementById("updOverlayDesc");
+        if (overlay) overlay.style.display = "flex";
+        if (title) title.textContent = `Установка MARKENS ${rel.version}...`;
+        if (desc) desc.textContent = "Запуск проверенного установщика Windows (electron-updater) и автоматический перезапуск...";
+        if (bar) bar.style.width = "100%";
+
+        try {
+          const res = await window.markensDesktop.installUpdateNow();
+          if (res && res.ok === false) {
+            window.__isUpdatingNow = false;
+            if (overlay) overlay.style.display = "none";
+            if (bar) bar.style.width = "0%";
+            updateSyncDiagField("lastError", res.error || "Обновление ещё скачивается");
+            updateSyncDiagField("applyResult", `⏳ ${res.error || "Подождите завершения загрузки"}`);
+            showLevelUpToast("⏳ Загрузка обновления", res.error || "Дождитесь 100% скачивания релиза");
+          }
+        } catch (err) {
+          window.__isUpdatingNow = false;
+          if (overlay) overlay.style.display = "none";
+          const msg = err && err.message ? err.message : "Ошибка запуска установщика";
+          updateSyncDiagField("lastError", msg);
+        }
+        return;
+      }
+
+      // В браузере открываем страницу последнего релиза на GitHub
+      window.open(GITHUB_RELEASES_WEB_URL, "_blank", "noopener,noreferrer");
     }
 
     document.getElementById("btnApplyAppUpdateNow").onclick = () => {
-      if (window.__autoUpdateTimer) { clearTimeout(window.__autoUpdateTimer); window.__autoUpdateTimer = null; }
-      if (window.__countdownInterval) { clearInterval(window.__countdownInterval); window.__countdownInterval = null; }
       performSelfUpdateAndRestart(window.__pendingCloudRelease);
     };
 
     document.getElementById("btnDismissUpdateBanner").onclick = () => {
-      if (window.__autoUpdateTimer) { clearTimeout(window.__autoUpdateTimer); window.__autoUpdateTimer = null; }
-      if (window.__countdownInterval) { clearInterval(window.__countdownInterval); window.__countdownInterval = null; }
       if (window.__pendingCloudRelease) {
         window.__dismissedUpdateVer = window.__pendingCloudRelease.version;
         safeSet("markens_dismissed_ota_ver", window.__dismissedUpdateVer);
       }
       document.getElementById("appUpdateBanner").style.display = "none";
-      updateLiveOtaPill(`🟢 ${window.__installedAppVersion} • Авто-OTA`, "#10b981");
+      updateLiveOtaPill(`🟢 ${window.__installedAppVersion} • GitHub Auto-Update`, "#10b981");
     };
 
     const btnTestBanner = document.getElementById("btnTestUpdateBannerLocal");
     if (btnTestBanner) {
       btnTestBanner.onclick = () => {
-        const ver = document.getElementById("inpOtaVersion")?.value.trim() || "v30.2";
-        const log = document.getElementById("inpOtaChangelog")?.value.trim() || "Проверка уведомления об обновлении";
         document.getElementById("settingsModal").style.display = "none";
-        showUpdateNotificationBanner({ version: ver, buildTs: Date.now(), changelog: log, autoForce: false });
+        showUpdateNotificationBanner({
+          version: "v30.1.99",
+          changelog: "Тестовая проверка уведомления electron-updater",
+          isDownloadedInstaller: true,
+          isTestPreview: true
+        });
       };
     }
 
-    let __isCheckingOta = false;
-    let __lastOtaCheckTs = 0;
-    let __otaFailureCount = 0;
-
-    async function checkAndApplyCloudOTA(manualTrigger = false) {
-      if (window.__isUpdatingNow) return;
-      if (__isCheckingOta) return;
-      const now = Date.now();
-      if (!manualTrigger && (now - __lastOtaCheckTs < 30000)) return;
-      __isCheckingOta = true;
-      __lastOtaCheckTs = now;
+    async function runSyncDiagnostics() {
+      const btn = document.getElementById("btnRunSyncDiagnostics");
+      if (btn) btn.textContent = "Проверка GitHub...";
+      const nowStr = new Date().toLocaleTimeString("ru-RU");
+      updateSyncDiagField("lastCheckTime", nowStr);
+      updateSyncDiagField("originVer", window.__installedAppVersion);
 
       try {
-        const res = await fetchWithTimeout(`${DB_URL}/ota_update.json?t=${now}`, { cache: "no-store" }, 6000);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const ota = await res.json();
-        __otaFailureCount = 0;
-
-        if (!ota || typeof ota !== "object" || ota.error || !ota.version) {
-          if (manualTrigger) {
-            updateLiveOtaPill(`✓ У вас актуальная ${window.__installedAppVersion}`, "#10b981");
+        if (window.markensDesktop && typeof window.markensDesktop.checkForUpdates === "function") {
+          updateLiveOtaPill("🔄 Проверка GitHub Releases...", "#fbbf24");
+          const ipcCheck = await window.markensDesktop.checkForUpdates();
+          if (ipcCheck && ipcCheck.ok === false && ipcCheck.code !== "DEV_MODE") {
+            updateSyncDiagField("lastError", ipcCheck.error || "Ошибка проверки electron-updater");
           }
+        }
+
+        const res = await fetchWithTimeout(GITHUB_API_LATEST_RELEASE, {
+          headers: { "Accept": "application/vnd.github+json" },
+          cache: "no-store"
+        }, 6500);
+
+        if (res.status === 404) {
+          updateSyncDiagField("firebaseVer", "Релизов на GitHub пока нет (ожидается первая сборка Actions)");
+          updateSyncDiagField("lastPublishTime", "Нет опубликованных релизов");
+          updateSyncDiagField("downloadResult", "Ожидание первого запуска workflow build-windows.yml");
+          updateSyncDiagField("applyResult", `Активна установленная версия ${window.__installedAppVersion}`);
+          updateSyncDiagField("lastError", "Ошибок нет");
+          updateLiveOtaPill(`🟢 ${window.__installedAppVersion} • Актуально`, "#10b981");
           return;
         }
 
-        // Strictly compare semantic versions only (prevents clock skew / timestamp loops!)
-        const isCloudStrictlyNewer = compareVersions(ota.version, window.__installedAppVersion) > 0;
-
-        if (
-          isCloudStrictlyNewer &&
-          ota.version !== window.__dismissedUpdateVer &&
-          !isOtaSigAlreadyApplied(ota.version, ota.buildTs) &&
-          isAuthenticOtaRelease(ota)
-        ) {
-          showUpdateNotificationBanner(ota);
-        } else {
-          if (manualTrigger) {
-            updateLiveOtaPill(`✓ У вас актуальная ${window.__installedAppVersion}`, "#10b981");
-            updateSyncDiagField("applyResult", `✓ Версия актуальна (${window.__installedAppVersion})`);
-          }
+        if (!res.ok) {
+          throw new Error(`GitHub API HTTP ${res.status}`);
         }
-      } catch (e) {
-        __otaFailureCount++;
-        const errMsg = e && e.message ? e.message : "Сбой сети";
-        updateSyncDiagField("lastError", errMsg);
-        if (manualTrigger) updateLiveOtaPill(`⚠️ Ошибка сети (${window.__installedAppVersion})`, "#ef4444");
-      } finally {
-        __isCheckingOta = false;
-      }
-    }
 
-    addWinListener("focus", () => checkAndApplyCloudOTA(false));
-    addWinListener("online", () => { checkAndApplyCloudOTA(false); syncVoiceAndMembers(); });
-    addDocListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        checkAndApplyCloudOTA(false);
-        syncVoiceAndMembers();
-      }
-    });
+        const releaseData = await res.json();
+        const latestTag = releaseData && releaseData.tag_name ? String(releaseData.tag_name).trim() : null;
+        const pubDate = releaseData && releaseData.published_at
+          ? new Date(releaseData.published_at).toLocaleString("ru-RU")
+          : "Неизвестно";
+        const assets = Array.isArray(releaseData && releaseData.assets) ? releaseData.assets : [];
+        const hasExe = assets.some(a => a && a.name === "MARKENS_Setup.exe");
+        const hasLatestYml = assets.some(a => a && a.name === "latest.yml");
 
-    const EMBEDDED_GITHUB_PROJECT_FILES = {"package.json": "{\n  \"name\": \"markens-messenger\",\n  \"version\": \"30.1.0\",\n  \"description\": \"MARKENS Messenger v30.1 — Игровой мессенджер и голосовые комнаты VORTEX для Windows 10/11 (x64)\",\n  \"main\": \"main.js\",\n  \"author\": \"markens\",\n  \"license\": \"MIT\",\n  \"scripts\": {\n    \"start\": \"electron .\",\n    \"dist\": \"electron-builder --win nsis portable --x64 --publish never\",\n    \"dist:setup\": \"electron-builder --win nsis --x64 --publish never\",\n    \"dist:portable\": \"electron-builder --win portable --x64 --publish never\"\n  },\n  \"dependencies\": {},\n  \"devDependencies\": {\n    \"electron\": \"^31.3.1\",\n    \"electron-builder\": \"^24.13.3\"\n  },\n  \"build\": {\n    \"appId\": \"com.markens.messenger\",\n    \"productName\": \"MARKENS\",\n    \"copyright\": \"Copyright © 2026 markens\",\n    \"directories\": {\n      \"output\": \"dist\"\n    },\n    \"files\": [\n      \"main.js\",\n      \"preload.js\",\n      \"index.html\",\n      \"assets/**/*\",\n      \"package.json\"\n    ],\n    \"win\": {\n      \"icon\": \"assets/icon.ico\",\n      \"target\": [\n        {\n          \"target\": \"nsis\",\n          \"arch\": [\n            \"x64\"\n          ]\n        },\n        {\n          \"target\": \"portable\",\n          \"arch\": [\n            \"x64\"\n          ]\n        }\n      ]\n    },\n    \"nsis\": {\n      \"artifactName\": \"MARKENS_Setup.exe\",\n      \"oneClick\": false,\n      \"perMachine\": false,\n      \"allowElevation\": true,\n      \"allowToChangeInstallationDirectory\": true,\n      \"createDesktopShortcut\": true,\n      \"createStartMenuShortcut\": true,\n      \"shortcutName\": \"MARKENS\",\n      \"installerIcon\": \"assets/icon.ico\",\n      \"uninstallerIcon\": \"assets/icon.ico\",\n      \"installerHeaderIcon\": \"assets/icon.ico\",\n      \"runAfterFinish\": true\n    },\n    \"portable\": {\n      \"artifactName\": \"MARKENS_Portable.exe\"\n    }\n  }\n}\n", "main.js": "const { app, BrowserWindow, globalShortcut, Tray, Menu, nativeImage, session, desktopCapturer, ipcMain, shell } = require('electron');\nconst path = require('path');\nconst fs = require('fs');\nconst { exec } = require('child_process');\n\napp.setAppUserModelId('com.markens.messenger');\n\nlet mainWindow = null;\nlet tray = null;\nlet isQuitting = false;\nlet gameDetectInterval = null;\n\n// Single-instance lock: prevent multiple conflicting app windows\nconst gotTheLock = app.requestSingleInstanceLock();\nif (!gotTheLock) {\n  app.quit();\n} else {\n  app.on('second-instance', () => {\n    if (mainWindow) {\n      if (mainWindow.isMinimized()) mainWindow.restore();\n      if (!mainWindow.isVisible()) mainWindow.show();\n      mainWindow.focus();\n    }\n  });\n}\n\nfunction getAppIconPath() {\n  const icoPath = path.join(__dirname, 'assets', 'icon.ico');\n  const pngPath = path.join(__dirname, 'assets', 'icon.png');\n  if (fs.existsSync(icoPath)) return icoPath;\n  if (fs.existsSync(pngPath)) return pngPath;\n  return undefined;\n}\n\nfunction createWindow() {\n  mainWindow = new BrowserWindow({\n    width: 1280,\n    height: 820,\n    minWidth: 940,\n    minHeight: 600,\n    title: 'MARKENS',\n    backgroundColor: '#14161b',\n    icon: getAppIconPath(),\n    autoHideMenuBar: true,\n    show: false,\n    webPreferences: {\n      preload: path.join(__dirname, 'preload.js'),\n      contextIsolation: true,\n      nodeIntegration: false,\n      backgroundThrottling: false,\n      spellcheck: true\n    }\n  });\n\n  mainWindow.once('ready-to-show', () => {\n    mainWindow.show();\n  });\n\n  // Automatically grant microphone, webcam, screen share, and notification permissions\n  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {\n    callback(true);\n  });\n\n  session.defaultSession.setPermissionCheckHandler(() => true);\n\n  // Enable 1080p/1440p 60FPS screen capture with loopback system audio\n  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {\n    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {\n      if (sources && sources.length > 0) {\n        callback({ video: sources[0], audio: 'loopback' });\n      } else {\n        callback({});\n      }\n    }).catch(() => callback({}));\n  });\n\n  // Open external links in default OS browser while allowing internal popouts (about:blank)\n  mainWindow.webContents.setWindowOpenHandler(({ url }) => {\n    if (!url || url === 'about:blank') {\n      return {\n        action: 'allow',\n        overrideBrowserWindowOptions: {\n          width: 560,\n          height: 380,\n          autoHideMenuBar: true,\n          backgroundColor: '#0b0c0e',\n          icon: getAppIconPath()\n        }\n      };\n    }\n    if (/^https?:\\/\\//i.test(url)) {\n      shell.openExternal(url).catch(() => {});\n    }\n    return { action: 'deny' };\n  });\n\n  mainWindow.loadFile(path.join(__dirname, 'index.html'));\n\n  // Minimize to System Tray on window close so voice calls stay connected\n  mainWindow.on('close', (event) => {\n    if (!isQuitting) {\n      event.preventDefault();\n      mainWindow.hide();\n    }\n  });\n}\n\nfunction setupTray() {\n  try {\n    const iconPath = getAppIconPath();\n    const trayIcon = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();\n    tray = new Tray(trayIcon);\n    const contextMenu = Menu.buildFromTemplate([\n      {\n        label: 'Открыть MARKENS',\n        click: () => {\n          if (mainWindow) {\n            mainWindow.show();\n            mainWindow.focus();\n          }\n        }\n      },\n      { type: 'separator' },\n      {\n        label: 'Микрофон Вкл/Выкл (Ctrl+Shift+M)',\n        click: () => mainWindow && mainWindow.webContents.send('markens:toggle-mic')\n      },\n      {\n        label: 'Звук Вкл/Выкл (Ctrl+Shift+D)',\n        click: () => mainWindow && mainWindow.webContents.send('markens:toggle-deaf')\n      },\n      {\n        label: 'Игровой оверлей (Ctrl+Shift+O)',\n        click: () => mainWindow && mainWindow.webContents.send('markens:toggle-overlay')\n      },\n      { type: 'separator' },\n      {\n        label: 'Полный выход',\n        click: () => {\n          isQuitting = true;\n          app.quit();\n        }\n      }\n    ]);\n    tray.setToolTip('MARKENS v30.1 — Голосовой и игровой мессенджер');\n    tray.setContextMenu(contextMenu);\n    tray.on('click', () => {\n      if (mainWindow) {\n        if (mainWindow.isVisible()) {\n          mainWindow.focus();\n        } else {\n          mainWindow.show();\n          mainWindow.focus();\n        }\n      }\n    });\n  } catch (e) {\n    console.warn('Tray initialization skipped:', e);\n  }\n}\n\nfunction setupGlobalHotkeys() {\n  try {\n    globalShortcut.register('CommandOrControl+Shift+M', () => {\n      if (mainWindow) mainWindow.webContents.send('markens:toggle-mic');\n    });\n    globalShortcut.register('CommandOrControl+Shift+D', () => {\n      if (mainWindow) mainWindow.webContents.send('markens:toggle-deaf');\n    });\n    globalShortcut.register('CommandOrControl+Shift+O', () => {\n      if (mainWindow) mainWindow.webContents.send('markens:toggle-overlay');\n    });\n  } catch (e) {}\n}\n\nfunction startSteamProcessDetector() {\n  if (process.platform !== 'win32') return;\n  let lastGame = null;\n  const gameMap = [\n    { exe: 'cs2.exe', name: 'Counter-Strike 2' },\n    { exe: 'deadlock.exe', name: 'Deadlock' },\n    { exe: 'project8.exe', name: 'Deadlock' },\n    { exe: 'discovery.exe', name: 'THE FINALS' },\n    { exe: 'subnautica2.exe', name: 'Subnautica 2' },\n    { exe: 'subnautica.exe', name: 'Subnautica 2' },\n    { exe: 'dota2.exe', name: 'Dota 2' },\n    { exe: 'valorant.exe', name: 'Valorant' },\n    { exe: 'gta5.exe', name: 'Grand Theft Auto V' },\n    { exe: 'rustclient.exe', name: 'Rust' },\n    { exe: 'r5apex.exe', name: 'Apex Legends' },\n    { exe: 'fortniteclient-win64-shipping.exe', name: 'Fortnite' },\n    { exe: 'cyberpunk2077.exe', name: 'Cyberpunk 2077' }\n  ];\n\n  gameDetectInterval = setInterval(() => {\n    exec('tasklist /nh', { windowsHide: true }, (err, stdout) => {\n      if (err || !stdout) return;\n      const lower = stdout.toLowerCase();\n      let detected = null;\n      for (const item of gameMap) {\n        if (lower.includes(item.exe)) {\n          detected = item.name;\n          break;\n        }\n      }\n      if (detected !== lastGame) {\n        lastGame = detected;\n        if (mainWindow && !mainWindow.isDestroyed()) {\n          mainWindow.webContents.send('markens:game-detected', detected);\n        }\n      }\n    });\n  }, 5000);\n}\n\nipcMain.on('markens:apply-update', (_event, rel) => {\n  // Handled cleanly in renderer without infinite reload loops\n});\n\napp.on('before-quit', () => {\n  isQuitting = true;\n});\n\napp.whenReady().then(() => {\n  if (!gotTheLock) return;\n  createWindow();\n  setupTray();\n  setupGlobalHotkeys();\n  startSteamProcessDetector();\n});\n\napp.on('will-quit', () => {\n  if (gameDetectInterval) {\n    clearInterval(gameDetectInterval);\n    gameDetectInterval = null;\n  }\n  globalShortcut.unregisterAll();\n});\n\napp.on('window-all-closed', () => {\n  if (process.platform !== 'darwin') {\n    app.quit();\n  }\n});\n", "preload.js": "const { contextBridge, ipcRenderer } = require('electron');\n\ncontextBridge.exposeInMainWorld('markensDesktop', {\n  isDesktopApp: true,\n  platform: process.platform,\n  version: '30.1.0',\n  onToggleMic: (cb) => {\n    ipcRenderer.removeAllListeners('markens:toggle-mic');\n    ipcRenderer.on('markens:toggle-mic', () => cb());\n  },\n  onToggleDeaf: (cb) => {\n    ipcRenderer.removeAllListeners('markens:toggle-deaf');\n    ipcRenderer.on('markens:toggle-deaf', () => cb());\n  },\n  onToggleOverlay: (cb) => {\n    ipcRenderer.removeAllListeners('markens:toggle-overlay');\n    ipcRenderer.on('markens:toggle-overlay', () => cb());\n  },\n  onGameDetected: (cb) => {\n    ipcRenderer.removeAllListeners('markens:game-detected');\n    ipcRenderer.on('markens:game-detected', (_e, game) => cb(game));\n  },\n  applyUpdateAndRestart: (rel) => ipcRenderer.send('markens:apply-update', rel)\n});\n", "build-windows.yml": "name: Build MARKENS Windows EXE (x64)\n\non:\n  push:\n    branches:\n      - main\n      - master\n    tags:\n      - 'v*'\n  pull_request:\n    branches:\n      - main\n      - master\n  workflow_dispatch:\n\npermissions:\n  contents: write\n\njobs:\n  build-windows-x64:\n    name: Build MARKENS_Setup.exe & MARKENS_Portable.exe (Windows 10/11 x64)\n    runs-on: windows-latest\n\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v4\n\n      - name: Setup Node.js 20\n        uses: actions/setup-node@v4\n        with:\n          node-version: '20'\n\n      - name: Verify project structure\n        shell: pwsh\n        run: |\n          $required = @('package.json', 'main.js', 'preload.js', 'index.html', 'assets/icon.ico')\n          foreach ($f in $required) {\n            if (-not (Test-Path $f)) {\n              Write-Error \"Missing required file: $f\"\n              exit 1\n            }\n          }\n          Write-Host \"All required project files verified.\"\n\n      - name: Install dependencies\n        run: npm install\n\n      - name: Build Windows x64 NSIS Installer and Portable EXE\n        env:\n          CSC_IDENTITY_AUTO_DISCOVERY: false\n        run: npx electron-builder --win nsis portable --x64 --publish never\n\n      - name: Verify compiled EXE artifacts\n        shell: pwsh\n        run: |\n          Get-ChildItem -Path dist -Filter *.exe | ForEach-Object {\n            $sizeMB = [math]::Round($_.Length / 1MB, 2)\n            Write-Host \"Built: $($_.Name) ($sizeMB MB)\"\n          }\n          if (-not (Test-Path \"dist/MARKENS_Setup.exe\")) {\n            Write-Error \"MARKENS_Setup.exe was not generated!\"\n            exit 1\n          }\n\n      - name: Upload MARKENS_Setup.exe & MARKENS_Portable.exe to Actions Artifacts\n        uses: actions/upload-artifact@v4\n        with:\n          name: MARKENS-Windows-x64-EXE\n          path: |\n            dist/MARKENS_Setup.exe\n            dist/MARKENS_Portable.exe\n          if-no-files-found: error\n          retention-days: 90\n\n      - name: Publish to GitHub Releases (on version tag push)\n        if: startsWith(github.ref, 'refs/tags/v')\n        uses: softprops/action-gh-release@v2\n        with:\n          files: |\n            dist/MARKENS_Setup.exe\n            dist/MARKENS_Portable.exe\n          generate_release_notes: true\n"};
-
-    // GitHub Control Hub Handlers
-    const inpGhRepo = document.getElementById("inpGithubRepoUrl");
-    const btnSaveGhRepo = document.getElementById("btnSaveGithubRepoUrl");
-    if (inpGhRepo) {
-      inpGhRepo.value = safeGet("markens_github_repo_url", "https://github.com/markens/markens");
-    }
-    function getNormalizedGithubRepoUrl() {
-      const raw = (inpGhRepo?.value || safeGet("markens_github_repo_url", "https://github.com/markens/markens")).trim().replace(/\/+$/, "").replace(/\.git$/, "");
-      if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
-      return "https://github.com/" + raw.replace(/^github\.com\//, "");
-    }
-    if (btnSaveGhRepo) {
-      btnSaveGhRepo.onclick = () => {
-        const url = getNormalizedGithubRepoUrl();
-        if (inpGhRepo) inpGhRepo.value = url;
-        safeSet("markens_github_repo_url", url);
-        btnSaveGhRepo.textContent = "✓ Сохранено!";
-        setTimeout(() => { btnSaveGhRepo.textContent = "💾 Сохранить репозиторий"; }, 2000);
-      };
-    }
-    const btnGhRel = document.getElementById("btnOpenGhReleases");
-    if (btnGhRel) btnGhRel.onclick = () => window.open(getNormalizedGithubRepoUrl() + "/releases", "_blank", "noopener");
-    const btnGhAct = document.getElementById("btnOpenGhActions");
-    if (btnGhAct) btnGhAct.onclick = () => window.open(getNormalizedGithubRepoUrl() + "/actions", "_blank", "noopener");
-    const btnGhCode = document.getElementById("btnOpenGhCode");
-    if (btnGhCode) btnGhCode.onclick = () => window.open(getNormalizedGithubRepoUrl(), "_blank", "noopener");
-    const btnNetl = document.getElementById("btnOpenNetlifySite");
-    if (btnNetl) btnNetl.onclick = () => window.open("https://markensmesenger.netlify.app", "_blank", "noopener");
-
-    document.querySelectorAll(".btn-dl-proj-file").forEach(btn => {
-      btn.onclick = () => {
-        const fname = btn.getAttribute("data-projfile");
-        const content = EMBEDDED_GITHUB_PROJECT_FILES[fname];
-        if (!content) return;
-        const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = fname;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => a.remove(), 300);
-        const origTxt = btn.textContent;
-        btn.textContent = "✓ Скачано: " + fname;
-        setTimeout(() => { btn.textContent = origTxt; }, 2000);
-      };
-    });
-
-    const btnStopOta = document.getElementById("btnStopCloudOta");
-    if (btnStopOta) {
-      btnStopOta.onclick = async () => {
-        if (!verifyCreatorPrivilege()) { alert("🛡️ Доступ только для Создателя markens!"); return; }
-        btnStopOta.textContent = "Остановка...";
-        try {
-          await fetch(`${DB_URL}/ota_update.json`, { method: "DELETE" });
-          const gateSub = document.getElementById("otaGateStatusSub");
-          if (gateSub) {
-            gateSub.style.color = "#fbbf24";
-            gateSub.textContent = "🛑 Активная раздача в облаке остановлена. Новые клиенты не получают авто-обновление.";
-          }
-          updateSyncDiagField("firebaseVer", "Раздача остановлена Создателем");
-          updateSyncDiagField("applyResult", "✓ Авто-обновление в облаке отключено");
-          btnStopOta.textContent = "✓ Раздача остановлена";
-          setTimeout(() => { btnStopOta.textContent = "🛑 Остановить раздачу в облаке"; }, 2500);
-        } catch (e) {
-          btnStopOta.textContent = "❌ Ошибка сети";
-          setTimeout(() => { btnStopOta.textContent = "🛑 Остановить раздачу в облаке"; }, 2500);
+        if (!latestTag) {
+          updateSyncDiagField("firebaseVer", "Релиз не найден");
+          return;
         }
-      };
-    }
 
-    document.getElementById("btnPublishOta").onclick = async () => {
-      if (!verifyCreatorPrivilege()) { alert("🛡️ Доступ только для Создателя markens!"); return; }
-      const chkConfirmed = document.getElementById("chkConfirmOtaTested");
-      const gateSub = document.getElementById("otaGateStatusSub");
-      if (!chkConfirmed || !chkConfirmed.checked) {
-        if (gateSub) {
-          gateSub.style.color = "#ef4444";
-          gateSub.textContent = "⚠️ Сначала проверьте обнову и поставьте галочку «Я проверил эту версию (мне нравится)»!";
-        }
-        alert("⏸️ Публикация заблокирована защитой Создателя!\n\nСначала проверьте версию (в предпросмотре или по скриншоту), затем поставьте галочку «✅ Я проверил эту версию (мне нравится)» и нажмите кнопку снова.");
-        return;
-      }
-
-      const ver = document.getElementById("inpOtaVersion")?.value.trim() || CURRENT_SCRIPT_VERSION;
-      const changelog = document.getElementById("inpOtaChangelog")?.value.trim() || CURRENT_SCRIPT_CHANGELOG;
-      const autoForceVal = !!document.getElementById("chkOtaAutoForce")?.checked;
-      const b = document.getElementById("btnPublishOta");
-      b.textContent = "Публикация подтверждённой обновы...";
-
-      const newBuildTs = Date.now();
-      window.__installedAppVersion = ver;
-      window.__installedBuildTs = newBuildTs;
-      safeSet("markens_installed_version", ver);
-      safeSet("markens_installed_build_ts", String(newBuildTs));
-      markOtaSigApplied(ver, newBuildTs);
-      updateLiveOtaPill(`🟢 ${ver} • Опубликовано`, "#10b981");
-
-      const releasePayload = {
-        version: ver,
-        buildTs: newBuildTs,
-        signature: computeOtaReleaseSignature(ver, newBuildTs),
-        changelog,
-        js: "",
-        autoForce: autoForceVal,
-        confirmedByCreator: true,
-        updatedBy: currentUser.name,
-        ts: newBuildTs
-      };
-
-      try {
-        const fullHtmlSnapshot = window.__pristineBuildHtml || ("<!DOCTYPE html>\n" + document.documentElement.outerHTML);
-        const r1 = await fetch(`${DB_URL}/app_releases_v25/latest.json`, {
-          method: "PUT", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...releasePayload, fullHtml: fullHtmlSnapshot })
-        });
-        const r2 = await fetch(`${DB_URL}/ota_update.json`, {
-          method: "PUT", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(releasePayload)
-        });
-        if (!r1.ok || !r2.ok) {
-          throw new Error(`Ошибка базы Firebase (r1: ${r1.status}, r2: ${r2.status})`);
-        }
-        const annId = "m_upd_" + newBuildTs;
-        const annMsg = {
-          id: annId,
-          sender: "markens",
-          senderBadge: "👑",
-          text: `🚀 **Создатель подтвердил и выпустил обновление markens ${ver}!**\n📋 Изменения: ${changelog}`,
-          time: new Date().toTimeString().slice(0, 5),
-          ts: newBuildTs
-        };
-        if (!localChannelStore["обновления-markens"]) localChannelStore["обновления-markens"] = [];
-        localChannelStore["обновления-markens"].push(annMsg);
-        saveLocalStore();
-        fetch(`${DB_URL}/channels_v22/${encodeURIComponent("обновления-markens")}/${annId}.json`, {
-          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(annMsg)
-        }).catch(() => {});
-
-        if (gateSub) {
-          gateSub.style.color = "#10b981";
-          gateSub.textContent = `✅ Вы подтвердили релиз ${ver} — обнова успешно выложена в облако для всех устройств!`;
-        }
-        b.textContent = `✓ Релиз ${ver} выложен всем!`;
-        updateSyncDiagField("lastPublishTime", new Date().toLocaleTimeString("ru-RU"));
-        updateSyncDiagField("firebaseVer", `${ver} (подтверждён, ts: ${newBuildTs})`);
-        updateSyncDiagField("applyResult", `✓ Облачный релиз ${ver} подтверждён Создателем и опубликован`);
+        updateSyncDiagField("firebaseVer", `${latestTag} (${hasExe && hasLatestYml ? "MARKENS_Setup.exe + latest.yml готовы" : "сборка в процессе"})`);
+        updateSyncDiagField("lastPublishTime", pubDate);
+        updateSyncDiagField("integrityResult", hasLatestYml ? "✓ Файл latest.yml (SHA-512) присутствует в релизе" : "⚠️ Ожидается генерация latest.yml");
         updateSyncDiagField("lastError", "Ошибок нет");
-        setTimeout(() => { b.textContent = "✅ Подтвердить и выложить обнову всем"; }, 3000);
-      } catch (e) {
-        const errMsg = e && e.message ? e.message : "Сбой сети при публикации";
-        b.textContent = "❌ Ошибка публикации";
+
+        const cmp = compareVersions(latestTag, window.__installedAppVersion);
+        if (cmp > 0) {
+          updateSyncDiagField("applyResult", `🚀 Доступна новая версия ${latestTag} в GitHub Releases`);
+          if (!window.markensDesktop) {
+            showUpdateNotificationBanner({
+              version: latestTag,
+              changelog: releaseData.name || "Новая сборка Windows в GitHub Releases",
+              isDownloadedInstaller: false
+            });
+          }
+        } else {
+          updateSyncDiagField("applyResult", `✓ Установлена актуальная версия (${window.__installedAppVersion})`);
+          updateLiveOtaPill(`🟢 ${window.__installedAppVersion} • Актуально`, "#10b981");
+        }
+      } catch (err) {
+        const errMsg = (err && err.name === "AbortError")
+          ? "Таймаут ответа от GitHub API (проверьте интернет)"
+          : (err && err.message ? err.message : "Сбой сети при проверке GitHub Releases");
         updateSyncDiagField("lastError", errMsg);
-        updateSyncDiagField("applyResult", `Ошибка публикации: ${errMsg}`);
-        setTimeout(() => { b.textContent = "✅ Подтвердить и выложить обнову всем"; }, 3000);
+        updateLiveOtaPill(`⚠️ ${window.__installedAppVersion} • Офлайн`, "#f59e0b");
+      } finally {
+        if (btn) btn.innerHTML = `<span>🔄</span><span>Проверить обновления</span>`;
       }
-    };
+    }
+
+    const livePillEl = document.getElementById("liveOtaStatusPill");
+    if (livePillEl) {
+      livePillEl.onclick = () => runSyncDiagnostics();
+    }
+
+    const btnPubOta = document.getElementById("btnPublishOta");
+    if (btnPubOta) {
+      btnPubOta.onclick = async () => {
+        btnPubOta.textContent = "Проверка GitHub Releases...";
+        await runSyncDiagnostics();
+        btnPubOta.textContent = "✓ Проверка завершена";
+        setTimeout(() => { btnPubOta.textContent = "🔄 Проверить релиз на GitHub"; }, 2200);
+      };
+    }
 
     window.performSelfUpdateAndRestart = performSelfUpdateAndRestart;
     window.showUpdateNotificationBanner = showUpdateNotificationBanner;
-    window.checkAndApplyCloudOTA = checkAndApplyCloudOTA;
-    window.autoSyncBuildToCloud = autoSyncBuildToCloud;
+    window.checkAndApplyCloudOTA = runSyncDiagnostics;
     window.openUserVolumePopover = openUserVolumePopover;
 
     setTimeout(restoreUiStateAfterUpdate, 100);
-    registerMarkensInterval(() => {
-      if (document.visibilityState === "visible") {
-        checkAndApplyCloudOTA(false);
-      }
-    }, 60000);
 
-    checkAndApplyCloudOTA(false);
     syncVoiceAndMembers();
     registerMarkensInterval(() => {
       syncVoiceAndMembers();
@@ -6989,7 +6568,7 @@ goto loop`;
       if (chatActiveView.style.display === "flex") fetchChannelMessages(activeChannel);
       syncAllData();
     }, 3500);
-  
+
     // --- WATCH PARTY ENGINE ---
     const watchPartyBox = document.getElementById("watchPartyBox");
     const wpFrame = document.getElementById("wpFrame");
@@ -8614,10 +8193,80 @@ goto loop
     const btnDiag = document.getElementById("btnRunSyncDiagnostics");
     if (btnDiag) btnDiag.onclick = runSyncDiagnostics;
 
+    // Кнопка открытия страницы официальных релизов для ручного восстановления при необходимости
+    const btnRollback = document.getElementById("btnRollbackAppVersion");
+    if (btnRollback) {
+      btnRollback.onclick = async () => {
+        if (window.markensDesktop && typeof window.markensDesktop.openReleasesPage === "function") {
+          await window.markensDesktop.openReleasesPage();
+        } else {
+          window.open("https://github.com/marksambor0-hue/markensmasanger/releases/latest", "_blank", "noopener,noreferrer");
+        }
+      };
+    }
+
     // Native Electron IPC Bridge support (when running inside Electron .exe)
     if (window.markensDesktop) {
       const badge = document.getElementById("desktopModeStatusBadge");
-      if (badge) badge.textContent = "🟢 Запущено в Desktop App (.exe)";
+      if (badge) badge.textContent = `🟢 Запущено в Desktop App (${window.__installedAppVersion})`;
+
+      // 1. Получение начальной диагностики из процесса Main (MarkensUpdaterService)
+      if (typeof window.markensDesktop.getUpdateDiagnostics === "function") {
+        window.markensDesktop.getUpdateDiagnostics().then((diag) => {
+          if (!diag) return;
+          if (diag.activeVersion) {
+            window.__installedAppVersion = diag.activeVersion;
+            updateLiveOtaPill(`🟢 ${diag.activeVersion} • Автообновление`, "#10b981");
+            updateSyncDiagField("originVer", diag.activeVersion);
+            updateSyncDiagField("activeVer", `${diag.activeVersion} (Electron app.asar • Защищено)`);
+          }
+          if (diag.lastError) {
+            updateSyncDiagField("lastError", diag.lastError);
+          }
+        }).catch(() => {});
+      }
+
+      // 2. Подписка на события electron-updater из процесса Main
+      window.markensDesktop.onUpdateStatus?.((st) => {
+        if (!st || typeof st !== "object") return;
+        const nowStr = new Date().toLocaleTimeString("ru-RU");
+        updateSyncDiagField("lastCheckTime", nowStr);
+
+        if (st.event === "checking") {
+          updateLiveOtaPill("🔄 Проверка GitHub Releases...", "#fbbf24");
+          updateSyncDiagField("applyResult", "Проверка наличия новой версии на GitHub...");
+        } else if (st.event === "available" && st.version) {
+          updateLiveOtaPill(`⬇️ Скачивание ${st.version}...`, "#fbbf24");
+          updateSyncDiagField("firebaseVer", `${st.version} (GitHub Releases)`);
+          updateSyncDiagField("downloadResult", `Начато фоновое скачивание ${st.version}...`);
+          updateSyncDiagField("applyResult", `Обнаружена новая версия ${st.version}`);
+        } else if (st.event === "not-available") {
+          updateLiveOtaPill(`🟢 ${window.__installedAppVersion} • Актуально`, "#10b981");
+          updateSyncDiagField("firebaseVer", `${window.__installedAppVersion} (последняя версия)`);
+          updateSyncDiagField("downloadResult", "Обновление не требуется");
+          updateSyncDiagField("applyResult", `✓ Установлена актуальная версия ${window.__installedAppVersion}`);
+          updateSyncDiagField("lastError", "Ошибок нет");
+        } else if (st.event === "download-progress") {
+          const pct = st.percent || 0;
+          updateLiveOtaPill(`⬇️ Загрузка ${st.version || ""} (${pct}%)`, "#fbbf24");
+          updateSyncDiagField("downloadResult", `⬇️ Загружено ${pct}% (проверка SHA-512)...`);
+        } else if (st.event === "downloaded" && st.version) {
+          updateSyncDiagField("firebaseVer", `${st.version} (готово к установке)`);
+          updateSyncDiagField("downloadResult", `✓ Установщик ${st.version} скачан и проверен по SHA-512`);
+          updateSyncDiagField("applyResult", `Готово к установке: нажмите «Обновить и перезапустить»`);
+          updateSyncDiagField("lastError", "Ошибок нет");
+          showUpdateNotificationBanner({
+            version: st.version,
+            changelog: st.releaseNotes || "Новая версия Windows-приложения из GitHub Releases",
+            isDownloadedInstaller: true
+          });
+        } else if (st.event === "error" && st.error) {
+          updateLiveOtaPill(`⚠️ ${window.__installedAppVersion}`, "#f59e0b");
+          updateSyncDiagField("lastError", st.error);
+          updateSyncDiagField("applyResult", "Ошибка проверки/скачивания (доступно ручное скачивание с GitHub)");
+        }
+      });
+
       window.markensDesktop.onToggleMic?.(() => document.getElementById("btnMic")?.click());
       window.markensDesktop.onToggleDeaf?.(() => document.getElementById("btnDeaf")?.click());
       window.markensDesktop.onToggleOverlay?.(() => toggleGameOverlay());

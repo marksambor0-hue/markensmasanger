@@ -1,17 +1,26 @@
 {
   "name": "markens-messenger",
   "version": "30.1.0",
-  "description": "MARKENS Messenger v30.1 — Игровой мессенджер и голосовые комнаты VORTEX для Windows 10/11 (x64)",
+  "description": "MARKENS Messenger v30.1 — Десктопный игровой мессенджер и голосовые комнаты VORTEX для Windows 10/11 (x64)",
   "main": "main.js",
   "author": "markens",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/marksambor0-hue/markensmasanger.git"
+  },
+  "homepage": "https://github.com/marksambor0-hue/markensmasanger",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win nsis portable --x64 --publish never",
-    "dist:setup": "electron-builder --win nsis --x64 --publish never",
-    "dist:portable": "electron-builder --win portable --x64 --publish never"
+    "test": "node scripts/verify-build.js",
+    "verify": "node scripts/verify-build.js",
+    "dist": "npm run verify && electron-builder --win nsis --x64 --publish never",
+    "dist:win": "npm run verify && electron-builder --win nsis --x64 --publish never",
+    "dist:publish": "npm run verify && electron-builder --win nsis --x64 --publish always"
   },
-  "dependencies": {},
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "electron": "^31.3.1",
     "electron-builder": "^24.13.3"
@@ -27,20 +36,25 @@
       "main.js",
       "preload.js",
       "index.html",
+      "icon.ico",
+      "icon.png",
       "assets/**/*",
       "package.json"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "marksambor0-hue",
+        "repo": "markensmasanger",
+        "releaseType": "release"
+      }
+    ],
     "win": {
-      "icon": "assets/icon.ico",
+      "icon": "icon.ico",
+      "verifyUpdateCodeSignature": false,
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
           "arch": [
             "x64"
           ]
@@ -56,13 +70,10 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "MARKENS",
-      "installerIcon": "assets/icon.ico",
-      "uninstallerIcon": "assets/icon.ico",
-      "installerHeaderIcon": "assets/icon.ico",
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "installerHeaderIcon": "icon.ico",
       "runAfterFinish": true
-    },
-    "portable": {
-      "artifactName": "MARKENS_Portable.exe"
     }
   }
 }
