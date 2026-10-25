@@ -3405,7 +3405,17 @@
       }
     }
 
-    // 2. Capture pristine un-mutated HTML snapshot immediately on script parse
+    // 2. Recover from stale/corrupt OTA payloads that accidentally contain the whole app twice.
+    // Keep the first canonical shell and remove only duplicate root application layouts.
+    const appLayoutsAtBoot = document.querySelectorAll(".app-layout");
+    if (appLayoutsAtBoot.length > 1) {
+      for (let i = 1; i < appLayoutsAtBoot.length; i++) {
+        appLayoutsAtBoot[i].remove();
+      }
+      console.warn("MARKENS recovered duplicate app layouts:", appLayoutsAtBoot.length);
+    }
+
+    // 3. Capture pristine un-mutated HTML snapshot after layout recovery.
     if (!window.__pristineBuildHtml || window.__pristineBuildTs !== CURRENT_SCRIPT_TS) {
       window.__pristineBuildHtml = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
       window.__pristineBuildTs = CURRENT_SCRIPT_TS;
@@ -9700,7 +9710,32 @@ goto loop
             updateSyncDiagField("originVer", diag.activeVersion);
             updateSyncDiagField("activeVer", `${diag.activeVersion} (Electron app.asar • Защищено)`);
           }
-          if (diag.lastError) {
+
+          // Recover updater UI from main-process state if an event was emitted before
+          // the renderer subscribed. In particular, don't leave "100%" stuck forever.
+          if (diag.status === "downloaded" && diag.downloadedVersion) {
+            updateSyncDiagField("firebaseVer", `${diag.downloadedVersion} (готово к установке)`);
+            updateSyncDiagField("downloadResult", `✓ Установщик ${diag.downloadedVersion} скачан и проверен`);
+            updateSyncDiagField("applyResult", "Готово к установке: нажмите «Обновить и перезапустить»");
+            updateSyncDiagField("lastError", "Ошибок нет");
+            showUpdateNotificationBanner({
+              version: diag.downloadedVersion,
+              changelog: diag.releaseNotes || "Новая версия Windows-приложения из GitHub Releases",
+              isDownloadedInstaller: true
+            });
+          } else if (diag.status === "downloading" && diag.availableVersion) {
+            const pct = Math.max(0, Math.min(100, Number(diag.downloadPercent) || 0));
+            const phase = pct >= 100 ? "Проверка завершения загрузки" : `Загрузка ${pct}%`;
+            updateLiveOtaPill(`${phase}: ${diag.availableVersion}`, pct >= 100 ? "#f59e0b" : "#fbbf24");
+            updateSyncDiagField("firebaseVer", `${diag.availableVersion} (GitHub Releases)`);
+            updateSyncDiagField("downloadResult", pct >= 100
+              ? "Загрузка достигла 100%; ожидается подтверждение установщика…"
+              : `Загружено ${pct}%…`);
+          } else if (diag.status === "error" && diag.lastError) {
+            updateLiveOtaPill("⚠️ Ошибка автообновления", "#f59e0b");
+            updateSyncDiagField("lastError", diag.lastError);
+            updateSyncDiagField("applyResult", "Автообновление остановлено безопасно. Повторите проверку.");
+          } else if (diag.lastError) {
             updateSyncDiagField("lastError", diag.lastError);
           }
         }).catch(() => {});

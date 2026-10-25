@@ -164,7 +164,33 @@ class MarkensUpdaterService extends EventEmitter {
     };
 
     this._checkInFlight = false;
+    this.downloadFinalizeTimeoutMs = Number.isFinite(options.downloadFinalizeTimeoutMs) && options.downloadFinalizeTimeoutMs > 0
+      ? options.downloadFinalizeTimeoutMs
+      : 30000;
+    this._downloadFinalizeTimer = null;
     this._bindUpdaterEvents();
+  }
+
+  _clearDownloadFinalizeTimer() {
+    if (this._downloadFinalizeTimer) {
+      clearTimeout(this._downloadFinalizeTimer);
+      this._downloadFinalizeTimer = null;
+    }
+  }
+
+  _scheduleDownloadFinalizeWatchdog() {
+    this._clearDownloadFinalizeTimer();
+    this._downloadFinalizeTimer = setTimeout(() => {
+      this._downloadFinalizeTimer = null;
+      if (this.state.status !== 'downloading' || this.state.downloadPercent < 100) return;
+      const message = 'Загрузка достигла 100%, но установщик не подтвердил завершение. Повторите проверку обновлений.';
+      this.state.status = 'error';
+      this.state.lastError = message;
+      this._emitStatus({ event: 'error', error: message });
+    }, this.downloadFinalizeTimeoutMs);
+    if (this._downloadFinalizeTimer && typeof this._downloadFinalizeTimer.unref === 'function') {
+      this._downloadFinalizeTimer.unref();
+    }
   }
 
   _bindUpdaterEvents() {
@@ -176,6 +202,7 @@ class MarkensUpdaterService extends EventEmitter {
     this.updater.allowPrerelease = false;
 
     this.updater.on('checking-for-update', () => {
+      this._clearDownloadFinalizeTimer();
       this.state.status = 'checking';
       this.state.lastCheckTs = Date.now();
       this.state.lastError = null;
@@ -210,6 +237,7 @@ class MarkensUpdaterService extends EventEmitter {
     });
 
     this.updater.on('update-not-available', () => {
+      this._clearDownloadFinalizeTimer();
       this.state.status = 'not-available';
       this.state.availableVersion = null;
       this.state.lastCheckTs = Date.now();
@@ -223,6 +251,8 @@ class MarkensUpdaterService extends EventEmitter {
       const pct = prog && typeof prog.percent === 'number' ? Math.max(0, Math.min(100, Math.round(prog.percent))) : 0;
       this.state.status = 'downloading';
       this.state.downloadPercent = pct;
+      if (pct >= 100) this._scheduleDownloadFinalizeWatchdog();
+      else this._clearDownloadFinalizeTimer();
       this._emitStatus({
         event: 'download-progress',
         version: this.state.availableVersion,
@@ -231,10 +261,17 @@ class MarkensUpdaterService extends EventEmitter {
     });
 
     this.updater.on('update-downloaded', (info) => {
+      this._clearDownloadFinalizeTimer();
       const dlVer = normalizeVersionTag((info && info.version) || this.state.availableVersion);
       if (!dlVer || compareVersions(dlVer, this.currentVersion) <= 0) {
         this.state.status = 'not-available';
         this.state.downloadedVersion = null;
+        this.state.lastCheckTs = Date.now();
+        this._emitStatus({
+          event: 'not-available',
+          version: this.currentVersion,
+          reason: 'Загрузка завершилась, но версия не новее установленной'
+        });
         return;
       }
 
@@ -252,6 +289,7 @@ class MarkensUpdaterService extends EventEmitter {
     });
 
     this.updater.on('error', (err) => {
+      this._clearDownloadFinalizeTimer();
       const friendly = formatUpdaterError(err);
       this.state.status = 'error';
       this.state.lastError = friendly;
@@ -279,6 +317,7 @@ class MarkensUpdaterService extends EventEmitter {
       downloadPercent: this.state.downloadPercent,
       lastCheckTs: this.state.lastCheckTs,
       lastError: this.state.lastError,
+      releaseNotes: this.state.releaseNotes,
       electronUpdaterAvailable: Boolean(this.updater),
       isPackaged: this.isPackaged,
       releasesUrl: GITHUB_RELEASES_URL

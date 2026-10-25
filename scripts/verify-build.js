@@ -97,6 +97,58 @@ test('call/signaling guards are present and screen capture requires a user-selec
   assert.match(html, /senderMatches/);
 });
 
+test('download at 100 percent cannot remain stuck forever', async () => {
+  class FakeUpdater extends EventEmitter {
+    async checkForUpdates() {
+      return { updateInfo: { version: '31.0.2' } };
+    }
+    quitAndInstall() {}
+  }
+  const fake = new FakeUpdater();
+  const service = new MarkensUpdaterService({
+    currentVersion: '31.0.1',
+    updater: fake,
+    isPackaged: true,
+    downloadFinalizeTimeoutMs: 15
+  });
+  const seen = [];
+  service.on('status', (status) => seen.push(status.event));
+
+  fake.emit('update-available', { version: '31.0.2', releaseNotes: 'Test' });
+  fake.emit('download-progress', { percent: 100 });
+  await new Promise((resolve) => setTimeout(resolve, 45));
+
+  assert.equal(service.state.status, 'error');
+  assert.match(service.state.lastError, /100%/);
+  assert.ok(seen.includes('error'));
+});
+
+test('downloaded updater state is recoverable after renderer listener attaches late', () => {
+  class FakeUpdater extends EventEmitter {
+    async checkForUpdates() { return { updateInfo: { version: '31.0.2' } }; }
+    quitAndInstall() {}
+  }
+  const service = new MarkensUpdaterService({
+    currentVersion: '31.0.1',
+    updater: new FakeUpdater(),
+    isPackaged: true
+  });
+  service.updater.emit('update-available', { version: '31.0.2', releaseNotes: 'Verified test release' });
+  service.updater.emit('update-downloaded', { version: '31.0.2' });
+  const diag = service.getDiagnostics();
+  assert.equal(diag.status, 'downloaded');
+  assert.equal(diag.downloadedVersion, 'v31.0.2');
+  assert.equal(diag.releaseNotes, 'Verified test release');
+});
+
+test('startup layout guard and updater-state recovery are present', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /querySelectorAll\("\\.app-layout"\)/);
+  assert.match(html, /appLayoutsAtBoot\[i\]\.remove\(\)/);
+  assert.match(html, /diag\.status === "downloaded" && diag\.downloadedVersion/);
+  assert.match(html, /diag\.status === "downloading" && diag\.availableVersion/);
+});
+
 test('semantic version parser accepts the app version format', () => {
   assert.deepEqual(parseSemVer('v30.1.18'), [30, 1, 18]);
   assert.deepEqual(parseSemVer('30.1'), [30, 1, 0]);
