@@ -59,7 +59,7 @@ jobs:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |-
             You are the autonomous engineer for the existing MARKENS v31.0 Electron messenger.
-            Read GEMINI.md if present, inspect the actual repository, and read the complete request from .gemini/markens-request.md.
+            Read GEMINI.md and DEVELOPMENT_CONTRACT.md first, inspect the actual repository and recent commits, and read the complete request from .gemini/markens-request.md. Follow the shared release/version/UI preservation rules.
             IMPLEMENT the requested change in the repository; do not merely explain or print replacement code.
             Preserve the existing UI, Firebase integration, login, chats, and working features unless the request specifically changes them.
             Do not replace this Electron app with a different framework. Do not delete features to make a build pass.

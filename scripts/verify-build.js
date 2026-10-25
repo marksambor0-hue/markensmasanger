@@ -42,14 +42,19 @@ test('GitHub publishing points to the MARKENS repository', () => {
   assert.equal(pkg.build && pkg.build.nsis && pkg.build.nsis.artifactName, 'MARKENS_Setup.exe');
 });
 
-test('cloud OTA rewrites CURRENT_SCRIPT_TS with a real whitespace regex', () => {
+test('cloud OTA rewrites CURRENT_SCRIPT_TS and keeps app/release versions in sync', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  assert.ok(
-    html.includes('.replace(/const\\s+CURRENT_SCRIPT_TS\\s*=\\s*\\d+\\s*;/,'),
-    'OTA updater must use a valid CURRENT_SCRIPT_TS replacement regex'
+  const tsPattern = /const\s+CURRENT_SCRIPT_TS\s*=\s*\d+\s*;/;
+  const versionMatch = html.match(/const\s+CURRENT_SCRIPT_VERSION\s*=\s*["']v?([^"']+)["']\s*;/);
+  assert.ok(tsPattern.test(html), 'OTA updater must declare CURRENT_SCRIPT_TS as a numeric timestamp');
+  assert.ok(versionMatch, 'index.html must declare CURRENT_SCRIPT_VERSION');
+  assert.equal(
+    normalizeVersionTag(versionMatch[1]),
+    normalizeVersionTag(pkg.version),
+    'HTML app version and package.json release version must match'
   );
   const updated = 'const CURRENT_SCRIPT_TS = 123;'.replace(
-    /const\\s+CURRENT_SCRIPT_TS\\s*=\\s*\\d+\\s*;/,
+    tsPattern,
     'const CURRENT_SCRIPT_TS = 456;'
   );
   assert.equal(updated, 'const CURRENT_SCRIPT_TS = 456;');
