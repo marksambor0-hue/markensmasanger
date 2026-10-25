@@ -1,35 +1,118 @@
-name: Build MARKENS Windows EXE
+name: Build & Publish MARKENS Windows EXE (x64)
 
 on:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
+    name: Test, Build & Release MARKENS_Setup.exe
     runs-on: windows-latest
+
     steps:
-      - name: Get source code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
+
+      - name: Verify required project files and prepare icons
+        shell: pwsh
+        run: |
+          $required = @('package.json', 'main.js', 'preload.js', 'index.html', 'icon.ico', 'scripts/verify-build.js')
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) {
+              Write-Error "Отсутствует обязательный файл проекта: $file"
+              exit 1
+            }
+          }
+          New-Item -ItemType Directory -Force -Path "assets" | Out-Null
+          if (Test-Path "icon.ico") { Copy-Item "icon.ico" "assets/icon.ico" -Force }
+          if (Test-Path "icon.png") { Copy-Item "icon.png" "assets/icon.png" -Force }
+
+      - name: Read major.minor version from package.json and set build number
+        id: ver
+        shell: pwsh
+        run: |
+          $pkg = Get-Content -Path "package.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+          $parts = $pkg.version.Split('.')
+          $majorMinor = "$($parts[0]).$($parts[1])"
+          $newVer = "$majorMinor.${{ github.run_number }}"
+          Write-Host "Установка версии сборки: v$newVer"
+          "version=$newVer" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          # 1. Обновляем версию в package.json (для electron-builder и latest.yml)
+          npm version $newVer --no-git-tag-version --allow-same-version
+
+          # 2. Синхронизируем отображаемую версию в index.html
+          $html = Get-Content -Path "index.html" -Raw -Encoding UTF8
+          $html = $html -replace 'const CURRENT_SCRIPT_VERSION = "v[^"]+";', ('const CURRENT_SCRIPT_VERSION = "v' + $newVer + '";')
+          Set-Content -Path "index.html" -Value $html -Encoding UTF8 -NoNewline
+
+      - name: Run Automated Pre-Build Verification & Unit Tests
+        shell: cmd
+        run: node scripts/verify-build.js
 
       - name: Install dependencies
-        run: npm install
+        shell: cmd
+        run: npm install --no-audit --no-fund
 
-      - name: Build installer and portable app
-        run: npm run dist
+      - name: Build Windows Installer (MARKENS_Setup.exe + latest.yml + blockmap)
+        shell: cmd
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --win nsis --x64 --publish never
 
-      - name: Upload Windows EXE files
+      - name: Verify generated installer and SHA-512 metadata in dist/
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/MARKENS_Setup.exe")) {
+            Write-Error "Файл dist/MARKENS_Setup.exe не был создан!"
+            exit 1
+          }
+          if (-not (Test-Path "dist/latest.yml")) {
+            Write-Error "Файл dist/latest.yml (для electron-updater) не был создан!"
+            exit 1
+          }
+          Write-Host "=== Содержимое dist/latest.yml ==="
+          Get-Content "dist/latest.yml"
+          Get-ChildItem -Path "dist" | Format-Table Name, Length, LastWriteTime
+
+      - name: Upload Installer & latest.yml to Workflow Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: MARKENS-Windows-x64-EXE
-          path: dist/*.exe
+          name: MARKENS-Windows-x64-v${{ steps.ver.outputs.version }}
+          path: |
+            dist/MARKENS_Setup.exe
+            dist/MARKENS_Setup.exe.blockmap
+            dist/latest.yml
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90
+
+      - name: Publish Official GitHub Release for electron-updater
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: MARKENS v${{ steps.ver.outputs.version }} (Windows x64)
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/MARKENS_Setup.exe
+            dist/MARKENS_Setup.exe.blockmap
+            dist/latest.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

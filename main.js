@@ -35,7 +35,7 @@ function readBundledVersion() {
       return `v${pkg.version.replace(/^v/i, '')}`;
     }
   } catch (_e) {}
-  return 'v30.1.0';
+  return 'v31.0.0';
 }
 
 const BUNDLED_VERSION = readBundledVersion();
@@ -45,6 +45,14 @@ const UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000; // 15 минут
 
 if (app && typeof app.setAppUserModelId === 'function') {
   app.setAppUserModelId('com.markens.messenger');
+}
+
+// Аппаратное ускорение WebRTC, эхоподавления и минимальной задержки звука в Chromium
+if (app && app.commandLine && typeof app.commandLine.appendSwitch === 'function') {
+  app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+  app.commandLine.appendSwitch('enable-features', 'WebRtcHideLocalIpsWithMdns,AudioServiceOutOfProcess');
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
 }
 
 function parseSemVer(verStr) {
@@ -90,19 +98,17 @@ function formatUpdaterError(err) {
 
 /**
  * Контроллер автообновления MARKENS через electron-updater и GitHub Releases.
- * Не загружает и не выполняет HTML из Firebase; работает только со сборками из GitHub Releases,
- * проверяемыми по SHA-512 через latest.yml.
  */
 class MarkensUpdaterService extends EventEmitter {
   constructor(options = {}) {
     super();
-    this.currentVersion = normalizeVersionTag(options.currentVersion || BUNDLED_VERSION) || 'v30.1.0';
+    this.currentVersion = normalizeVersionTag(options.currentVersion || BUNDLED_VERSION) || 'v31.0.0';
     this.updater = options.updater !== undefined ? options.updater : autoUpdater;
     this.isPackaged = options.isPackaged !== undefined ? Boolean(options.isPackaged) : Boolean(app && app.isPackaged);
     this.onBeforeQuitAndInstall = typeof options.onBeforeQuitAndInstall === 'function' ? options.onBeforeQuitAndInstall : null;
 
     this.state = {
-      status: 'idle', // 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'installing' | 'error'
+      status: 'idle',
       currentVersion: this.currentVersion,
       availableVersion: null,
       downloadedVersion: null,
@@ -399,7 +405,6 @@ if (IS_TEST_MODE) {
       mainWindow.show();
     });
 
-    // Разрешаем только необходимые функции мессенджера (микрофон, камера, захват экрана, уведомления)
     session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
       const url = webContents ? webContents.getURL() : '';
       const isTrustedLocal = url.startsWith('file://') || url === 'about:blank';
@@ -410,7 +415,6 @@ if (IS_TEST_MODE) {
       return ALLOWED_PERMISSIONS.has(permission);
     });
 
-    // Захват экрана 1080p/1440p 60 FPS со системным звуком (loopback)
     session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
       desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
         if (sources && sources.length > 0) {
@@ -421,7 +425,6 @@ if (IS_TEST_MODE) {
       }).catch(() => callback({}));
     });
 
-    // Запрещаем переход главного окна на сторонние внешние сайты
     mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
       if (!targetUrl.startsWith('file://')) {
         event.preventDefault();
@@ -431,7 +434,6 @@ if (IS_TEST_MODE) {
       }
     });
 
-    // Внешние ссылки открываем в браузере Windows, а about:blank разрешаем для мини-окна стрима
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (!url || url === 'about:blank') {
         return {
@@ -456,7 +458,6 @@ if (IS_TEST_MODE) {
       return { action: 'deny' };
     });
 
-    // Автоматическое перезапускное восстановление окна из app.asar при сбое рендера
     mainWindow.webContents.on('render-process-gone', (_event, details) => {
       console.error('Renderer process gone:', details && details.reason);
       setTimeout(() => {
@@ -466,7 +467,6 @@ if (IS_TEST_MODE) {
       }, 1000);
     });
 
-    // Всегда загружаем проверенный index.html из защищённого пакета приложения (app.asar)
     mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
     mainWindow.on('close', (event) => {
@@ -643,7 +643,6 @@ if (IS_TEST_MODE) {
     setupGlobalHotkeys();
     startSteamProcessDetector();
 
-    // Автоматическая проверка обновлений при запуске и каждые 15 минут
     if (app.isPackaged && autoUpdater) {
       setTimeout(() => {
         updaterService.checkForUpdates().catch(() => {});
