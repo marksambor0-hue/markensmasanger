@@ -1,24 +1,22 @@
-name: Build MARKENS Windows EXE (x64)
+name: Build & Publish MARKENS Windows App
 
 on:
   push:
     branches:
       - main
-      - master
-    tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - main
-      - master
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# Serialize releases so two runs do not try to publish the same version at once.
+concurrency:
+  group: markens-windows-release
+  cancel-in-progress: false
+
 jobs:
   build-windows-x64:
-    name: Build MARKENS_Setup.exe on Windows Runner (x64)
+    name: Test, build and publish MARKENS
     runs-on: windows-latest
 
     steps:
@@ -30,19 +28,9 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Prepare and verify project structure & icons
+      - name: Prepare project structure and icons
         shell: pwsh
         run: |
-          # If someone uploaded a zip bundle to the root without unpacking, extract missing Electron files automatically
-          if (-not (Test-Path 'package.json')) {
-            $zipFile = Get-ChildItem -Path . -Filter *.zip | Select-Object -First 1
-            if ($zipFile) {
-              Write-Host "Extracting missing project files from $($zipFile.Name)..."
-              Expand-Archive -Path $zipFile.FullName -DestinationPath . -Force
-            }
-          }
-
-          # Normalize icon locations so both root icon.ico/icon.png and assets/icon.ico/icon.png exist
           New-Item -ItemType Directory -Force -Path "assets" | Out-Null
           if ((Test-Path "icon.ico") -and -not (Test-Path "assets/icon.ico")) {
             Copy-Item "icon.ico" "assets/icon.ico" -Force
@@ -55,36 +43,79 @@ jobs:
             Copy-Item "assets/icon.png" "icon.png" -Force
           }
 
-          $required = @('package.json', 'main.js', 'preload.js', 'index.html', 'icon.ico')
+          $required = @('package.json', 'main.js', 'preload.js', 'index.html', 'icon.ico', 'scripts/verify-build.js')
           foreach ($f in $required) {
             if (-not (Test-Path $f)) {
-              Write-Error "Missing required file in repository root: $f"
+              Write-Error "Missing required MARKENS file: $f"
               exit 1
             }
           }
-          Write-Host "All required MARKENS v30.1 files verified."
+          Write-Host "Required MARKENS files are present."
+
+      - name: Calculate next release version
+        id: release_version
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const packagePath = 'package.json';
+            const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+            let baseVersion = pkg.version;
+
+            try {
+              const response = await github.rest.repos.getLatestRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo
+              });
+              if (response.data && response.data.tag_name) {
+                baseVersion = response.data.tag_name;
+              }
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info('No published release exists yet; using package.json as the starting version.');
+            }
+
+            const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(baseVersion || ''));
+            if (!match) {
+              throw new Error('Cannot calculate next version from: ' + baseVersion);
+            }
+
+            const nextVersion = match[1] + '.' + match[2] + '.' + (Number(match[3]) + 1);
+            pkg.version = nextVersion;
+            fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + '\n');
+            core.setOutput('version', nextVersion);
+            core.setOutput('tag', 'v' + nextVersion);
+            core.info('Next MARKENS release: v' + nextVersion + ' (based on ' + baseVersion + ')');
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build MARKENS_Setup.exe & MARKENS_Portable.exe (Windows 10/11 x64)
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npx electron-builder --win nsis portable --x64 --publish never
+      - name: Run MARKENS checks
+        run: npm test
 
-      - name: Verify compiled MARKENS_Setup.exe
+      - name: Build installer and publish GitHub Release with updater metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --win nsis --x64 --publish always
+
+      - name: Verify generated installer and update metadata
         shell: pwsh
         run: |
-          Get-ChildItem -Path dist -Filter *.exe | ForEach-Object {
-            $sizeMB = [math]::Round($_.Length / 1MB, 2)
-            Write-Host "Compiled EXE: $($_.Name) ($sizeMB MB)"
-          }
           if (-not (Test-Path "dist/MARKENS_Setup.exe")) {
-            Write-Error "MARKENS_Setup.exe was not generated!"
+            Write-Error "MARKENS_Setup.exe was not generated."
             exit 1
           }
+          if (-not (Test-Path "dist/latest.yml")) {
+            Write-Error "latest.yml was not generated; auto-update metadata is missing."
+            exit 1
+          }
+          Get-Item "dist/MARKENS_Setup.exe" | ForEach-Object {
+            Write-Host ("Installer: {0} ({1} MB)" -f $_.Name, [math]::Round($_.Length / 1MB, 2))
+          }
+          Write-Host "Updater metadata latest.yml is present."
 
-      - name: Upload MARKENS_Setup.exe to GitHub Actions Artifacts
+      - name: Keep installer available in Actions Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: MARKENS_Setup.exe
@@ -92,19 +123,12 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Upload MARKENS_Portable.exe to GitHub Actions Artifacts
+      - name: Keep updater metadata available for diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: MARKENS_Portable.exe
-          path: dist/MARKENS_Portable.exe
+          name: MARKENS_Update_Metadata
+          path: |
+            dist/latest.yml
+            dist/*.blockmap
           if-no-files-found: warn
           retention-days: 90
-
-      - name: Publish to GitHub Releases (on version tag push)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/MARKENS_Setup.exe
-            dist/MARKENS_Portable.exe
-          generate_release_notes: true
