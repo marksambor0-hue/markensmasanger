@@ -121,8 +121,7 @@ class MarkensUpdaterService extends EventEmitter {
     if (!this.updater) return;
 
     this.updater.autoDownload = true;
-    // Never install an update merely because the user closes MARKENS; the UI button must call quitAndInstall().
-    this.updater.autoInstallOnAppQuit = false;
+    this.updater.autoInstallOnAppQuit = true;
     this.updater.allowDowngrade = false;
     this.updater.allowPrerelease = false;
 

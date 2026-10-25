@@ -2974,7 +2974,7 @@
                 <button id="btnRunSyncDiagnostics" style="background:var(--brand);color:#fff;border:none;padding:8px 16px;border-radius:6px;font-weight:700;font-size:0.84rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(79,70,229,0.4);">
                   <span>🔄</span><span>Проверить обновления</span>
                 </button>
-                <button id="btnRollbackAppVersion" style="background:#383a40;color:#c7d2fe;border:1px solid rgba(79,70,229,0.45);padding:8px 14px;border-radius:6px;font-weight:700;font-size:0.82rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Открыть официальные релизы GitHub для ручного восстановления, если обновление не удалось">
+                <button id="btnRollbackAppVersion" style="background:#383a40;color:#c7d2fe;border:1px solid rgba(79,70,229,0.45);padding:8px 14px;border-radius:6px;font-weight:700;font-size:0.82rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Открыть страницу релизов GitHub для ручного скачивания установщика при сбое">
                   <span>📥</span><span>Открыть GitHub Releases</span>
                 </button>
               </div>
@@ -8193,7 +8193,7 @@ goto loop
     const btnDiag = document.getElementById("btnRunSyncDiagnostics");
     if (btnDiag) btnDiag.onclick = runSyncDiagnostics;
 
-    // Кнопка открытия страницы официальных релизов для ручного восстановления при необходимости
+    // Кнопка открытия официальной страницы GitHub Releases (резервное восстановление)
     const btnRollback = document.getElementById("btnRollbackAppVersion");
     if (btnRollback) {
       btnRollback.onclick = async () => {
