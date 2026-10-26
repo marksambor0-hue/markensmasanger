@@ -87,6 +87,14 @@ function isAllowedPermissionCheck(webContents, permission, requestingOrigin, det
   }
 }
 
+function isTrustedIpcSender(event, expectedSender) {
+  if (!event || !event.sender || !expectedSender || event.sender !== expectedSender) return false;
+  const frameUrl = event.senderFrame && typeof event.senderFrame.url === 'string'
+    ? event.senderFrame.url
+    : '';
+  return isTrustedAppUrl(frameUrl || getWebContentsUrl(event.sender));
+}
+
 if (app && typeof app.setAppUserModelId === 'function') {
   app.setAppUserModelId('com.markens.messenger');
 }
@@ -421,6 +429,7 @@ if (IS_TEST_MODE) {
     isTrustedAppUrl,
     isAllowedPermissionRequest,
     isAllowedPermissionCheck,
+    isTrustedIpcSender,
     BUNDLED_VERSION,
     GITHUB_RELEASES_URL
   };
@@ -602,21 +611,43 @@ if (IS_TEST_MODE) {
   }
 
   function setupIpcHandlers() {
-    ipcMain.handle('markens:get-update-diagnostics', async () => {
-      return updaterService.getDiagnostics();
+    const allowed = (event) => isTrustedIpcSender(
+      event,
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null
+    );
+    const denied = () => ({
+      ok: false,
+      code: 'UNTRUSTED_SENDER',
+      error: 'Запрос отклонён: источник не является главным окном MARKENS'
     });
 
-    ipcMain.handle('markens:check-for-updates', async () => {
+    ipcMain.handle('markens:get-update-diagnostics', async (event) => {
+      if (!allowed(event)) return denied();
+      return updaterService ? updaterService.getDiagnostics() : {
+        ok: false, code: 'UPDATER_NOT_READY', error: 'Служба обновлений ещё запускается'
+      };
+    });
+
+    ipcMain.handle('markens:check-for-updates', async (event) => {
+      if (!allowed(event)) return denied();
+      if (!updaterService) return { ok: false, code: 'UPDATER_NOT_READY', error: 'Служба обновлений ещё запускается' };
       return updaterService.checkForUpdates();
     });
 
-    ipcMain.handle('markens:install-update', async () => {
+    ipcMain.handle('markens:install-update', async (event) => {
+      if (!allowed(event)) return denied();
+      if (!updaterService) return { ok: false, code: 'UPDATER_NOT_READY', error: 'Служба обновлений ещё запускается' };
       return updaterService.installDownloadedUpdate();
     });
 
-    ipcMain.handle('markens:open-releases-page', async () => {
-      await shell.openExternal(GITHUB_RELEASES_URL);
-      return { ok: true, url: GITHUB_RELEASES_URL };
+    ipcMain.handle('markens:open-releases-page', async (event) => {
+      if (!allowed(event)) return denied();
+      try {
+        await shell.openExternal(GITHUB_RELEASES_URL);
+        return { ok: true, url: GITHUB_RELEASES_URL };
+      } catch (_error) {
+        return { ok: false, code: 'OPEN_URL_FAILED', error: 'Не удалось открыть страницу релизов GitHub' };
+      }
     });
   }
 
