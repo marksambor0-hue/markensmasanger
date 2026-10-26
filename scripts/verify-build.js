@@ -17,13 +17,27 @@ const {
   formatUpdaterError,
   isTrustedAppUrl,
   isAllowedPermissionRequest,
-  isAllowedPermissionCheck
+  isAllowedPermissionCheck,
+  isTrustedIpcSender
 } = require(path.join(root, 'main.js'));
 
 const tests = [];
 function test(name, run) {
   tests.push({ name, run });
 }
+
+test('IPC calls are restricted to the trusted main-frame renderer', () => {
+  const { pathToFileURL } = require('node:url');
+  const appUrl = pathToFileURL(path.join(root, 'index.html')).href;
+  const otherUrl = pathToFileURL(path.join(root, 'other.html')).href;
+  const sender = { getURL: () => appUrl };
+
+  assert.equal(isTrustedIpcSender({ sender, senderFrame: { url: appUrl } }, sender), true);
+  assert.equal(isTrustedIpcSender({ sender, senderFrame: { url: otherUrl } }, sender), false);
+  assert.equal(isTrustedIpcSender({ sender, senderFrame: { url: 'https://example.invalid/' } }, sender), false);
+  assert.equal(isTrustedIpcSender({ sender: { getURL: () => appUrl }, senderFrame: { url: appUrl } }, sender), false);
+  assert.equal(isTrustedIpcSender(null, sender), false);
+});
 
 test('required Electron project files exist', () => {
   for (const relativePath of ['package.json', 'main.js', 'preload.js', 'index.html', 'icon.ico']) {
