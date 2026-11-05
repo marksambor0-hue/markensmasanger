@@ -6425,7 +6425,11 @@
     document.getElementById("btnLogout").onclick = () => {
       safeRemove("markens_user_session");
       try { document.cookie = "markens_session=; path=/; max-age=0"; } catch (e) {}
+      currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
       document.getElementById("settingsModal").style.display = "none";
+      applyUserUI();
+      authErrMsg.textContent = "";
+      inpAuthPass.value = "";
       authModal.style.display = "flex";
     };
 
