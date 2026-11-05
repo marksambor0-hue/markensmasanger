@@ -3856,6 +3856,10 @@
       }
       const passHash = hashUserPassword(cleanLogin, pass);
       const isCreatorLogin = cleanLogin.toLowerCase() === "markens";
+      if (isCreatorLogin && isRegMode) {
+        authErrMsg.textContent = "Аккаунт Создателя нельзя зарегистрировать через обычную форму.";
+        return;
+      }
       let existingAcc = null;
 
       if (window.__authLockoutUntil && Date.now() < window.__authLockoutUntil) {
