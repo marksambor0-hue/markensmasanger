@@ -3616,7 +3616,6 @@
       }
     }
 
-    let __lastMsgSentTs = 0;
     let __lastFriendReqTs = 0;
 
     window.escapeHtml = escapeHtml;
@@ -4659,7 +4658,7 @@
           <div class="ds-msg-header">
             <span class="ds-msg-author" data-username="${m.sender || 'Участник'}" style="cursor:pointer;">${getSenderBadgeIcon(m)} ${m.sender || "Участник"}</span>
             ${getSenderRankPillHtml(m)}
-            <span class="ds-msg-time">Сегодня, в ${m.time || "12:00"} ${m.edited ? "(изменено)" : ""}${pinBadge}</span>
+            <span class="ds-msg-time">Сегодня, в ${m.time || "12:00"} ${m.edited ? "(изменено)" : ""}${m.deliveryState === "sending" ? " • Отправка…" : (m.deliveryState === "pending" ? " • Не отправлено" : "")}${pinBadge}</span>
           </div>
           ${m.text ? `<div class="ds-msg-text" style="font-size:${window.chatFontSizePx || 15}px;">${formattedText}</div>` : ""}
           ${partyHtml}
@@ -4736,7 +4735,59 @@
       messagesScroller.scrollTop = messagesScroller.scrollHeight;
     }
 
+    const __pendingChatRetryLocks = new Set();
+
+    async function writeChatMessageToCloud(channelKey, msgObj, isDm) {
+      const cloudPayload = { ...msgObj };
+      delete cloudPayload.deliveryState;
+      delete cloudPayload._localDm;
+      if (isDm && cloudPayload.text) {
+        cloudPayload.text = encryptDmPayload(cloudPayload.text, channelKey);
+        cloudPayload.e2ee = true;
+      }
+      const url = DB_URL + "/channels_v22/" + encodeURIComponent(channelKey) + "/" + encodeURIComponent(msgObj.id) + ".json";
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await fetchWithTimeout(url, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cloudPayload)
+          }, 12000);
+          if (response && response.ok) return true;
+          throw new Error("Firebase message write failed (" + (response ? response.status : "no response") + ")");
+        } catch (error) {
+          if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 350));
+          else console.warn("Message remains queued for retry:", msgObj.id, error);
+        }
+      }
+      return false;
+    }
+
+    async function retryPendingChatMessages(channelKey) {
+      const key = String(channelKey || "");
+      if (!key || __pendingChatRetryLocks.has(key)) return;
+      const list = localChannelStore[key] || [];
+      const pending = list.filter(m => m && m.id && ["sending", "pending"].includes(m.deliveryState)).slice(0, 20);
+      if (!pending.length) return;
+      __pendingChatRetryLocks.add(key);
+      try {
+        for (const queuedMessage of pending) {
+          const ok = await writeChatMessageToCloud(key, queuedMessage, !!queuedMessage._localDm);
+          const currentMessage = (localChannelStore[key] || []).find(m => m && m.id === queuedMessage.id);
+          if (currentMessage) currentMessage.deliveryState = ok ? "sent" : "pending";
+          saveLocalStore();
+          if (activeChannel === key && chatActiveView.style.display === "flex") {
+            renderChatMessages(localChannelStore[key] || []);
+          }
+          if (!ok) break;
+        }
+      } finally {
+        __pendingChatRetryLocks.delete(key);
+      }
+    }
     async function sendChatMessage(textOverride, mediaUrl = null, mediaType = null) {
+      const channelKey = activeChannel;
+      const messageIsDm = isDmChat;
       const txt = textOverride !== undefined ? textOverride : chatInput.value.trim();
       if (!txt && !mediaUrl) return;
       if (textOverride === undefined) chatInput.value = "";
@@ -4759,26 +4810,17 @@
         mediaType,
         replyTo: window.activeReplyTarget ? { id: window.activeReplyTarget.id, sender: window.activeReplyTarget.sender, text: window.activeReplyTarget.text } : null,
         time: new Date().toTimeString().slice(0, 5),
-        ts: Date.now()
+        ts: Date.now(),
+        deliveryState: "sending",
+        _localDm: messageIsDm
       };
       if (window.activeReplyTarget) cancelReplyMode();
 
-      if (Date.now() - __lastMsgSentTs < 220) return;
-      __lastMsgSentTs = Date.now();
-
-      if (!localChannelStore[activeChannel]) localChannelStore[activeChannel] = [];
-      localChannelStore[activeChannel].push(msgObj);
+      if (!localChannelStore[channelKey]) localChannelStore[channelKey] = [];
+      localChannelStore[channelKey].push(msgObj);
       saveLocalStore();
-      renderChatMessages(localChannelStore[activeChannel]);
-
-      try {
-        const cloudPayload = (isDmChat && msgObj.text)
-          ? { ...msgObj, text: encryptDmPayload(msgObj.text, activeChannel), e2ee: true }
-          : msgObj;
-        await fetch(`${DB_URL}/channels_v22/${encodeURIComponent(activeChannel)}/${msgId}.json`, {
-          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cloudPayload)
-        });
-      } catch (e) {}
+      if (activeChannel === channelKey) renderChatMessages(localChannelStore[channelKey]);
+      retryPendingChatMessages(channelKey);
     }
 
     chatInput.addEventListener("keydown", (e) => {
@@ -4795,31 +4837,45 @@
       }
     });
 
-    let __isFetchingMsgs = false;
+    const __channelFetchLocks = new Set();
     async function fetchChannelMessages(chKey) {
-      if (__isFetchingMsgs) return;
-      __isFetchingMsgs = true;
+      if (!chKey) return;
+      const channelLockKey = String(chKey);
+      if (__channelFetchLocks.has(channelLockKey)) return;
+      __channelFetchLocks.add(channelLockKey);
+      retryPendingChatMessages(channelLockKey);
       try {
-        const r = await fetch(`${DB_URL}/channels_v22/${encodeURIComponent(chKey)}.json`);
-        if (!r.ok) return;
+        const url = DB_URL + "/channels_v22/" + encodeURIComponent(channelLockKey) + ".json";
+        const r = await fetchWithTimeout(url, { cache: "no-store" }, 9000);
+        if (!r || !r.ok) return;
         const d = await r.json();
-        if (d && typeof d === "object" && !d.error) {
+        if (d && typeof d === "object" && !Array.isArray(d) && !d.error) {
           const list = Object.entries(d)
             .map(([k, v]) => (v && typeof v === "object" ? { ...v, id: k } : null))
-            .filter(Boolean)
-            .sort((a, b) => (a.ts || 0) - (b.ts || 0));
-          const prevList = localChannelStore[chKey] || [];
-          const sigNew = JSON.stringify(list.map(m => [m.id, m.text, m.edited, m.reactions, m.slots]));
-          const sigOld = JSON.stringify(prevList.map(m => [m.id, m.text, m.edited, m.reactions, m.slots]));
+            .filter(Boolean);
+          const remoteIds = new Set(list.map(m => m.id));
+          const prevList = localChannelStore[channelLockKey] || [];
+          const pendingLocal = prevList.filter(m =>
+            m && m.id && ["sending", "pending"].includes(m.deliveryState) && !remoteIds.has(m.id)
+          );
+          const mergedById = new Map(list.map(m => [m.id, m]));
+          pendingLocal.forEach(m => mergedById.set(m.id, m));
+          const mergedList = Array.from(mergedById.values()).sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+          const sigNew = JSON.stringify(mergedList.map(m => [m.id, m.text, m.edited, m.reactions, m.slots, m.deliveryState]));
+          const sigOld = JSON.stringify(prevList.map(m => [m.id, m.text, m.edited, m.reactions, m.slots, m.deliveryState]));
           if (sigNew !== sigOld) {
-            localChannelStore[chKey] = list;
+            localChannelStore[channelLockKey] = mergedList;
             saveLocalStore();
-            if (activeChannel === chKey && chatActiveView.style.display === "flex") {
-              renderChatMessages(list);
+            if (activeChannel === channelLockKey && chatActiveView.style.display === "flex") {
+              renderChatMessages(mergedList);
             }
           }
         }
-      } catch (e) {} finally { __isFetchingMsgs = false; }
+      } catch (e) {
+        console.warn("Channel sync failed; local messages were kept:", channelLockKey, e);
+      } finally {
+        __channelFetchLocks.delete(channelLockKey);
+      }
     }
 
     // ========================================================
