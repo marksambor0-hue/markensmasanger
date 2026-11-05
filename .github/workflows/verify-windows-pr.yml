@@ -1,0 +1,36 @@
+name: Verify MARKENS Windows PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'index.html'
+      - 'main.js'
+      - 'preload.js'
+      - 'package.json'
+      - 'scripts/**'
+      - '.github/workflows/verify-windows-pr.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-windows:
+    name: Static checks on Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run MARKENS regression checks
+        run: npm test
