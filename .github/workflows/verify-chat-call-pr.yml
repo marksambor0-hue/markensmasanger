@@ -1,0 +1,35 @@
+name: Verify MARKENS call and chat reliability
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'index.html'
+      - 'main.js'
+      - 'preload.js'
+      - 'package.json'
+      - 'scripts/**'
+      - '.github/workflows/verify-chat-call-pr.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Windows-compatible regression checks
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run regression checks and renderer syntax validation
+        run: npm test
