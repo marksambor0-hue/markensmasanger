@@ -87,6 +87,7 @@ test('Electron permissions require the exact local app entry page', () => {
 
 test('Windows HTML hardening guards remain enabled', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /isCreatorLogin && isRegMode/);
   assert.match(html, /isSafeMediaUrl\(m\.mediaUrl\)/);
   assert.match(html, /isSafeMediaUrl\(m\.audioUrl\)/);
   assert.match(html, /txt\.replaceChildren\(\)/);
