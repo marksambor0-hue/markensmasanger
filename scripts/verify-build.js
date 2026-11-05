@@ -85,6 +85,18 @@ test('Electron permissions require the exact local app entry page', () => {
   assert.equal(isAllowedPermissionCheck(null, 'notifications', 'file://', {}), false);
 });
 
+test('Windows HTML hardening guards remain enabled', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /isSafeMediaUrl\(m\.mediaUrl\)/);
+  assert.match(html, /isSafeMediaUrl\(m\.audioUrl\)/);
+  assert.match(html, /txt\.replaceChildren\(\)/);
+  assert.match(html, /roomTitle\.textContent = rName/);
+  assert.match(html, /downloadedHash\.toLowerCase\(\) !== String\(rel\.sha256\)/);
+  assert.match(html, /rawHtml\.length > 12 \* 1024 \* 1024/);
+  assert.match(html, /__iceRestartInProgress/);
+  assert.match(html, /pc\.createOffer\(\{ iceRestart: true \}\)/);
+});
+
 test('call/signaling guards are present and screen capture requires a user-selected source', () => {
   const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
