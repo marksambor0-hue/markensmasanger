@@ -1,6 +1,16 @@
 name: Verify MARKENS call and chat reliability
 
 on:
+  push:
+    branches:
+      - fix/call-chat-reliability-batch-1
+    paths:
+      - 'index.html'
+      - 'main.js'
+      - 'preload.js'
+      - 'package.json'
+      - 'scripts/**'
+      - '.github/workflows/verify-chat-call-pr.yml'
   pull_request:
     branches:
       - main
