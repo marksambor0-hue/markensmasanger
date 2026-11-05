@@ -4878,6 +4878,13 @@
       }
     }
 
+    addWinListener("online", () => retryPendingChatMessages(activeChannel));
+    registerMarkensInterval(() => {
+      if (document.visibilityState === "visible" && chatActiveView.style.display === "flex") {
+        retryPendingChatMessages(activeChannel);
+      }
+    }, 10000);
+
     // ========================================================
     // SMART PHOTO & VIDEO ENGINE (Compression, Preview Bar & Lightbox)
     // ========================================================
@@ -5435,6 +5442,8 @@
       if (!peerName) return;
       const pc = activePeerConnections[peerName];
       if (pc) {
+        if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+        pc.__iceRestartTimer = null;
         try { pc.close(); } catch (e) {}
         delete activePeerConnections[peerName];
       }
@@ -5701,6 +5710,7 @@
             }
           } else if (sigData.sdp.type === "answer" && pc && pc.signalingState === "have-local-offer") {
             await pc.setRemoteDescription({ type: "answer", sdp: sigData.sdp.sdp });
+            pc.__iceRestartInProgress = false;
           }
         }
 
