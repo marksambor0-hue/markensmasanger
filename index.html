@@ -5396,16 +5396,7 @@
       } catch (e) {
         console.warn("Real media devices unavailable or blocked, activating AudioContext media generator:", e);
       }
-      try {
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        localMicGainNode = audioCtx.createGain();
-        const dest = audioCtx.createMediaStreamDestination();
-        localMicGainNode.connect(dest);
-        localMediaStream = dest.stream;
-        return localMediaStream;
-      } catch (e) {
-        return null;
-      }
+      return null;
     }
 
     // Real WebRTC P2P Connection & Signaling Helper (for DM Calls & Multi-Peer Voice Rooms)
@@ -5496,6 +5487,12 @@
       const pairKey = getWebRtcPairKey(peerName);
 
       const stream = await acquireLocalMediaStream(needVideo);
+      const hasLiveMicrophone = !!(stream && stream.getAudioTracks().some(track => track.readyState === "live"));
+      if (!hasLiveMicrophone) {
+        closePeerConnectionForUser(peerName);
+        return null;
+      }
+      pc.__isMarkensInitiator = !!isInitiator;
       if (stream) {
         stream.getTracks().forEach(track => {
           try {
@@ -5581,28 +5578,47 @@
         }
       };
 
-      pc.onconnectionstatechange = async () => {
-        if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      pc.__iceRestartInProgress = false;
+      pc.__iceRestartTimer = null;
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected" || pc.connectionState === "closed") {
+          if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+          pc.__iceRestartTimer = null;
+          pc.__iceRestartInProgress = false;
+          return;
+        }
+        if (pc.connectionState !== "failed" && pc.connectionState !== "disconnected") return;
+        if (!isInitiator || pc.__iceRestartInProgress || pc.signalingState !== "stable") return;
+        if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+        const retryDelay = pc.connectionState === "failed" ? 0 : 4000;
+        pc.__iceRestartTimer = setTimeout(async () => {
+          pc.__iceRestartTimer = null;
+          if (pc.connectionState === "closed" || pc.__iceRestartInProgress || pc.signalingState !== "stable") return;
+          pc.__iceRestartInProgress = true;
           try {
             pc.restartIce();
-            if (isInitiator) {
-              const offer = await pc.createOffer({ iceRestart: true });
-              offer.sdp = enhanceSdpForOpusHd(offer.sdp);
-              await pc.setLocalDescription(offer);
-              await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  from: currentUser.name,
-                  to: peerName,
-                  type: "offer",
-                  sdp: pc.localDescription.sdp,
-                  ts: Date.now()
-                })
-              }, 4500);
+            const offer = await pc.createOffer({ iceRestart: true });
+            offer.sdp = enhanceSdpForOpusHd(offer.sdp);
+            await pc.setLocalDescription(offer);
+            const response = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: currentUser.name,
+                to: peerName,
+                type: "offer",
+                sdp: pc.localDescription.sdp,
+                ts: Date.now()
+              })
+            }, 4500);
+            if (!response || !response.ok) throw new Error("ICE restart offer could not be delivered");
+          } catch (error) {
+            if (pc.signalingState === "have-local-offer") {
+              try { await pc.setLocalDescription({ type: "rollback" }); } catch (_rollbackError) {}
             }
-          } catch (e) {}
-        }
+            pc.__iceRestartInProgress = false;
+          }
+        }, retryDelay);
       };
 
       if (isInitiator) {
@@ -5610,7 +5626,7 @@
           const offer = await pc.createOffer();
           offer.sdp = enhanceSdpForOpusHd(offer.sdp);
           await pc.setLocalDescription(offer);
-          await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+          const offerResponse = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -5621,13 +5637,21 @@
               ts: Date.now()
             })
           }, 5000);
-        } catch (e) {}
+          if (!offerResponse || !offerResponse.ok) throw new Error("Initial WebRTC offer could not be delivered");
+          pc.__lastSdpPublishTs = Date.now();
+        } catch (e) {
+          pc.__lastSdpPublishTs = 0;
+        }
       }
       return pc;
     }
 
+    const __webrtcPollsInFlight = new Set();
     async function pollWebRtcSignalingForPeer(peerName, needVideo = false) {
       if (!peerName || peerName.toLowerCase() === currentUser.name.toLowerCase()) return;
+      const pollKey = String(peerName).toLowerCase();
+      if (__webrtcPollsInFlight.has(pollKey)) return;
+      __webrtcPollsInFlight.add(pollKey);
       const pairKey = getWebRtcPairKey(peerName);
       try {
         const res = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}.json`, {}, 4500);
@@ -5636,6 +5660,24 @@
         if (!sigData || typeof sigData !== "object") return;
 
         let pc = activePeerConnections[peerName];
+        // If the initial offer write failed or its answer was lost, republish the same offer with a fresh timestamp.
+        if (pc && pc.__isMarkensInitiator && pc.signalingState === "have-local-offer" && pc.localDescription?.type === "offer" &&
+            Date.now() - (pc.__lastSdpPublishTs || 0) > 2800) {
+          try {
+            const retryOfferResponse = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: currentUser.name,
+                to: peerName,
+                type: "offer",
+                sdp: pc.localDescription.sdp,
+                ts: Date.now()
+              })
+            }, 4500);
+            if (retryOfferResponse && retryOfferResponse.ok) pc.__lastSdpPublishTs = Date.now();
+          } catch (_retryError) {}
+        }
         if (sigData.sdp && isValidPeerSdpMessage(sigData.sdp, peerName, currentUser.name)) {
           if (sigData.sdp.type === "offer") {
             if (!pc) pc = await ensureWebRtcPeerConnection(peerName, false, needVideo);
@@ -5684,12 +5726,16 @@
             }
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn("WebRTC signaling poll failed:", peerName, e);
+      } finally {
+        __webrtcPollsInFlight.delete(pollKey);
+      }
     }
 
     // 1-on-1 DM CALLS CONTROLLER
     async function startDmCall(friendName, type = "voice") {
-      if (!friendName || friendName.toLowerCase() === currentUser.name.toLowerCase()) return;
+      if (!friendName || friendName.toLowerCase() === currentUser.name.toLowerCase() || activeDmCall) return;
       const callId = [currentUser.name.toLowerCase(), friendName.toLowerCase()].sort().join("_");
       activeDmCall = {
         peer: friendName,
@@ -5713,21 +5759,30 @@
       const vRem = document.getElementById("callVidRemote");
       const avLoc = document.getElementById("callAvLocal");
       const avRem = document.getElementById("callAvRemote");
-      if (type === "video") {
-        await acquireLocalMediaStream(true);
-        if (localMediaStream && vLoc) {
-          vLoc.srcObject = localMediaStream;
-          vLoc.style.display = "block";
-          if (avLoc) avLoc.style.display = "none";
-        }
+      const callStream = await acquireLocalMediaStream(type === "video");
+      if (!callStream || !callStream.getAudioTracks().some(track => track.readyState === "live")) {
+        stopRingtone();
+        activeDmCall.state = "failed";
+        document.getElementById("dmCallStatusLabel").textContent = "Нет доступа к микрофону. Проверьте разрешения Windows и попробуйте снова.";
+        return;
+      }
+      if (type === "video" && vLoc) {
+        vLoc.srcObject = callStream;
+        vLoc.style.display = "block";
+        if (avLoc) avLoc.style.display = "none";
       } else {
-        await acquireLocalMediaStream(false);
         if (vLoc) vLoc.style.display = "none";
         if (avLoc) avLoc.style.display = "flex";
       }
 
-      ensureWebRtcPeerConnection(friendName, true, type === "video");
-      // Signal in Firebase
+      const peerConnection = await ensureWebRtcPeerConnection(friendName, true, type === "video");
+      if (!peerConnection) {
+        stopRingtone();
+        activeDmCall.state = "failed";
+        document.getElementById("dmCallStatusLabel").textContent = "Не удалось подготовить голосовое соединение. Проверьте микрофон и повторите звонок.";
+        return;
+      }
+      // Publish the incoming-call record only after the caller has prepared its WebRTC offer.
       try {
         await fetchWithTimeout(`${DB_URL}/dm_calls_v25/${callId}.json`, {
           method: "PUT",
@@ -5747,7 +5802,21 @@
       stopRingtone();
       document.getElementById("incomingCallModal").style.display = "none";
       if (!activeDmCall) return;
-      activeDmCall.state = "connected";
+      const acceptedCall = activeDmCall;
+      const acceptedStream = await acquireLocalMediaStream(acceptedCall.type === "video");
+      if (!acceptedStream || !acceptedStream.getAudioTracks().some(track => track.readyState === "live")) {
+        acceptedCall.state = "failed";
+        document.getElementById("dmCallStatusLabel").textContent = "Не удалось получить доступ к микрофону. Звонок не подключён.";
+        try {
+          await fetchWithTimeout(`${DB_URL}/dm_calls_v25/${encodeURIComponent(acceptedCall.callId)}.json`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ state: "failed", failedBy: currentUser.name, ts: Date.now() })
+          }, 4500);
+        } catch (_e) {}
+        return;
+      }
+      acceptedCall.state = "connected";
 
       // Open DM chat with caller
       openDmWithFriend(activeDmCall.peer);
@@ -5760,7 +5829,6 @@
       document.getElementById("callAvLocal").textContent = currentUser.name.charAt(0).toUpperCase();
 
       playSound("join");
-      await acquireLocalMediaStream(activeDmCall.type === "video");
       await pollWebRtcSignalingForPeer(activeDmCall.peer, activeDmCall.type === "video");
 
       // Update call in Firebase
@@ -5858,8 +5926,8 @@
       if (__isCheckingCalls) return;
       __isCheckingCalls = true;
       try {
-        const res = await fetch(`${DB_URL}/dm_calls_v25.json`);
-        if (!res.ok) return;
+        const res = await fetchWithTimeout(`${DB_URL}/dm_calls_v25.json`, { cache: "no-store" }, 7000);
+        if (!res || !res.ok) return;
         const data = await res.json();
         if (!data || typeof data !== "object") return;
         const now = Date.now();
@@ -5874,11 +5942,19 @@
               document.getElementById("incCallType").textContent = `Входящий ${call.type === 'video' ? 'видеозвонок' : 'голосовой звонок'}`;
               incModal.style.display = "flex";
               startRingtone("incoming");
+              return;
             }
-            return;
+            if (activeDmCall.state !== "connected") return;
           }
-          if (activeDmCall && activeDmCall.callId === cId) {
-            pollWebRtcSignalingForPeer(activeDmCall.peer, activeDmCall.type === "video");
+          if (activeDmCall && activeDmCall.callId === cId && call.state !== "failed") {
+            if (activeDmCall.isCaller || activeDmCall.state === "connected") {
+              await pollWebRtcSignalingForPeer(activeDmCall.peer, activeDmCall.type === "video");
+            }
+          }
+          if (activeDmCall && activeDmCall.callId === cId && activeDmCall.isCaller && call.state === "failed") {
+            activeDmCall.state = "failed";
+            stopRingtone();
+            document.getElementById("dmCallStatusLabel").textContent = "Собеседник не смог подключить микрофон.";
           }
           // If caller sees call answered
           if (activeDmCall && activeDmCall.callId === cId && activeDmCall.isCaller && call.state === "connected") {
