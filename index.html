@@ -3626,7 +3626,7 @@
     window.computeOtaReleaseSignature = computeOtaReleaseSignature;
     window.verifyCreatorPrivilege = verifyCreatorPrivilege;
 
-    let currentUser = { name: "markens", isOwner: true, joinedVortex: true, status: "В сети", game: null, avatar: null };
+    let currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
     let isRegMode = false;
     let activeChannel = "основной-чат";
     let activeChannelTitle = "основной-чат";
@@ -3856,6 +3856,44 @@
       }
       const passHash = hashUserPassword(cleanLogin, pass);
       const isCreatorLogin = cleanLogin.toLowerCase() === "markens";
+      let existingAcc = null;
+
+      if (window.__authLockoutUntil && Date.now() < window.__authLockoutUntil) {
+        const waitSec = Math.ceil((window.__authLockoutUntil - Date.now()) / 1000);
+        authErrMsg.textContent = `Слишком много попыток. Подождите ${waitSec} сек.`;
+        return;
+      }
+
+      // Never grant access when the authentication server cannot be reached.
+      try {
+        const accRes = await fetchWithTimeout(`${DB_URL}/accounts/${encodeURIComponent(cleanLogin)}.json`, { cache: "no-store" }, 8000);
+        if (!accRes || !accRes.ok) throw new Error("Authentication server unavailable");
+        existingAcc = await accRes.json();
+      } catch (_netErr) {
+        authErrMsg.textContent = "Не удалось проверить аккаунт. Проверьте интернет и попробуйте ещё раз.";
+        return;
+      }
+
+      if (isRegMode) {
+        if (existingAcc && typeof existingAcc === "object") {
+          authErrMsg.textContent = "Этот никнейм уже занят.";
+          return;
+        }
+      } else {
+        if (!existingAcc || typeof existingAcc !== "object" || !existingAcc.passwordHash) {
+          authErrMsg.textContent = "Аккаунт не найден. Переключитесь на регистрацию.";
+          return;
+        }
+        if (existingAcc.passwordHash !== passHash) {
+          window.__failedAuthCount = (window.__failedAuthCount || 0) + 1;
+          if (window.__failedAuthCount >= 5) {
+            window.__authLockoutUntil = Date.now() + 30000;
+            window.__failedAuthCount = 0;
+          }
+          authErrMsg.textContent = "Неверный логин или пароль.";
+          return;
+        }
+      }
 
       if (isCreatorLogin) {
         currentUser = {
@@ -3880,36 +3918,6 @@
         };
       }
 
-      // Защита от перебора паролей (Rate-Limit)
-      const nowAuthTs = Date.now();
-      if (window.__authLockoutUntil && nowAuthTs < window.__authLockoutUntil) {
-        const waitSec = Math.ceil((window.__authLockoutUntil - nowAuthTs) / 1000);
-        authErrMsg.textContent = `Слишком много попыток. Подождите ${waitSec} сек.`;
-        return;
-      }
-
-      // 1. Проверяем пароль по базе Firebase (с коротким таймаутом 2.5с, чтобы оффлайн/тесты не зависали)
-      try {
-        const accRes = await fetchWithTimeout(`${DB_URL}/accounts/${encodeURIComponent(cleanLogin)}.json`, {}, 2500);
-        if (accRes && accRes.ok) {
-          const existingAcc = await accRes.json();
-          if (existingAcc && typeof existingAcc === "object" && existingAcc.passwordHash) {
-            if (existingAcc.passwordHash !== passHash) {
-              window.__failedAuthCount = (window.__failedAuthCount || 0) + 1;
-              if (window.__failedAuthCount >= 5) {
-                window.__authLockoutUntil = Date.now() + 15000;
-                window.__failedAuthCount = 0;
-              }
-              authErrMsg.textContent = isRegMode
-                ? "Этот никнейм уже занят другим пользователем (неверный пароль)"
-                : "Неверный пароль от аккаунта";
-              return;
-            }
-          }
-        }
-      } catch (_netErr) {
-        // Если сеть недоступна, продолжаем локальный вход
-      }
       window.__failedAuthCount = 0;
 
       // 2. Успешный вход / регистрация
@@ -3960,11 +3968,8 @@
     function applyUserUI() {
       updateMicButtonUI();
       updateDeafenButtonUI();
-      if (currentUser.name.toLowerCase() === "markens") {
-        currentUser.isOwner = true;
-        currentUser.joinedVortex = true;
-      }
-      const isOwn = !!currentUser.isOwner;
+      // Owner privileges are granted only after the online password check in handleAuth().
+      const isOwn = !!currentUser.isOwner && currentUser.name.toLowerCase() === "markens";
 
       document.getElementById("dockName").textContent = isOwn ? `👑 ${currentUser.name}` : currentUser.name;
       document.getElementById("rpName").innerHTML = isOwn
@@ -4016,29 +4021,22 @@
     const btnQuickEnt = document.getElementById("btnQuickEnterMarkens");
     if (btnQuickEnt) {
       btnQuickEnt.onclick = () => {
-        const typedNick = inpAuthLogin.value.trim();
-        if (typedNick) {
-          if (!inpAuthPass.value.trim()) inpAuthPass.value = "12345";
-          handleAuth();
-        } else {
-          authModal.style.display = "none";
-          applyUserUI();
-          showFriendsHub();
-        }
+        authErrMsg.textContent = "Для безопасного входа введите имя пользователя и пароль.";
+        inpAuthLogin.focus();
       };
     }
 
     try {
       const saved = loadSavedSession();
-      if (saved && saved.name) {
-        currentUser = saved;
-        if (currentUser.name.toLowerCase() !== "markens") {
-          currentUser.isOwner = false;
-          currentUser.vortexAccepted_v25 = safeGet("vortex_accepted_v25_" + currentUser.name.toLowerCase()) === "1";
-          currentUser.joinedVortex = currentUser.vortexAccepted_v25;
-        }
+      if (saved && typeof saved.name === "string" && saved.name.trim() && saved.name.toLowerCase() !== "markens") {
+        currentUser = { ...saved, isOwner: false };
+        currentUser.vortexAccepted_v25 = safeGet("vortex_accepted_v25_" + currentUser.name.toLowerCase()) === "1";
+        currentUser.joinedVortex = currentUser.vortexAccepted_v25;
+        authModal.style.display = "none";
+      } else {
+        currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+        authModal.style.display = "flex";
       }
-      authModal.style.display = "none";
       applyUserUI();
     } catch (e) { console.error("Startup init error:", e); }
 
