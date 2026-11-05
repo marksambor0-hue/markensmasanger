@@ -3602,7 +3602,8 @@
       if (!url || typeof url !== "string") return false;
       const trimmed = url.trim();
       if (/^(javascript|vbscript|data:text\/html)/i.test(trimmed)) return false;
-      return /^(https?:\/\/|data:image\/|data:video\/|data:audio\/|blob:)/i.test(trimmed);
+      if (/[\u0000-\u001f\u007f"'<>]/.test(trimmed)) return false;
+      return /^(https?:\/\/|data:image\/(?:png|jpeg|gif|webp);base64,|data:video\/(?:webm|mp4);base64,|data:audio\/(?:webm|ogg|mpeg);base64,|blob:)/i.test(trimmed);
     }
 
     async function fetchWithTimeout(resource, options = {}, timeoutMs = 6500) {
@@ -4238,7 +4239,11 @@
       const scroller = document.querySelector("#sidebarModeServer .sidebar-scroller");
       const row = document.createElement("div");
       row.className = "nav-row vc-row";
-      row.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/></svg><span>${rName}</span>`;
+      const roomIcon = document.createElement("span");
+      roomIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/></svg>';
+      const roomTitle = document.createElement("span");
+      roomTitle.textContent = rName;
+      row.append(roomIcon, roomTitle);
       const tree = document.createElement("div");
       tree.className = "vc-tree";
       tree.id = "tree_" + rId;
@@ -4246,7 +4251,15 @@
         playSound("join");
         document.getElementById("rtcPanel").style.display = "flex";
         document.getElementById("rtcRoomLabel").textContent = "VORTEX / " + rName;
-        tree.innerHTML = `<div class="vc-user"><div class="vc-av">${currentUser.name.charAt(0).toUpperCase()}</div><span>${currentUser.name}</span></div>`;
+        const selfRow = document.createElement("div");
+        selfRow.className = "vc-user";
+        const selfAvatar = document.createElement("div");
+        selfAvatar.className = "vc-av";
+        selfAvatar.textContent = currentUser.name.charAt(0).toUpperCase();
+        const selfName = document.createElement("span");
+        selfName.textContent = currentUser.name;
+        selfRow.append(selfAvatar, selfName);
+        tree.replaceChildren(selfRow);
       };
       scroller.appendChild(row);
       scroller.appendChild(tree);
@@ -4605,14 +4618,15 @@
         body.className = "ds-msg-content";
 
         let mediaHtml = "";
-        if (m.mediaUrl) {
-          const isVid = m.mediaType === "video" || m.mediaUrl.startsWith("data:video/") || /\.(mp4|webm|mov|mkv|avi)(\?.*)?$/i.test(m.mediaUrl);
+        if (m.mediaUrl && isSafeMediaUrl(m.mediaUrl)) {
+          const safeMediaUrl = escapeHtml(m.mediaUrl);
+          const isVid = m.mediaType === "video" || /^data:video\//i.test(m.mediaUrl) || /\.(mp4|webm|mov|mkv|avi)(\?.*)?$/i.test(m.mediaUrl);
           mediaHtml = isVid
-            ? `<video src="${m.mediaUrl}" controls playsinline preload="metadata" style="max-width:100%;max-height:280px;border-radius:8px;margin-top:6px;background:#000;display:block;"></video>`
-            : `<img src="${m.mediaUrl}" loading="lazy" style="max-width:100%;max-height:300px;border-radius:8px;margin-top:6px;display:block;object-fit:contain;" />`;
+            ? `<video src="${safeMediaUrl}" controls playsinline preload="metadata" style="max-width:100%;max-height:280px;border-radius:8px;margin-top:6px;background:#000;display:block;"></video>`
+            : `<img src="${safeMediaUrl}" loading="lazy" style="max-width:100%;max-height:300px;border-radius:8px;margin-top:6px;display:block;object-fit:contain;" />`;
         }
-        if (m.audioUrl) {
-          mediaHtml += `<audio src="${m.audioUrl}" controls style="height:34px;margin-top:6px;display:block;"></audio>`;
+        if (m.audioUrl && isSafeMediaUrl(m.audioUrl)) {
+          mediaHtml += `<audio src="${escapeHtml(m.audioUrl)}" controls style="height:34px;margin-top:6px;display:block;"></audio>`;
         }
 
         let reactHtml = "";
@@ -4625,13 +4639,13 @@
           const slots = Array.isArray(m.slots) ? m.slots : [m.sender, null, null, null, null];
           const filled = slots.filter(Boolean).length;
           const slotsMarkup = slots.map((s, idx) =>
-            s ? `<div class="party-slot filled">👤 ${s}</div>`
+            s ? `<div class="party-slot filled">👤 ${escapeHtml(s)}</div>`
               : `<div class="party-slot">Слот ${idx + 1}</div>`
           ).join("");
           partyHtml = `
             <div class="ds-party-card">
               <div style="display:flex;justify-content:space-between;align-items:center;">
-                <div style="font-weight:800;color:var(--text-header);font-size:0.95rem;">🎮 Сбор пати: ${m.game || "Counter-Strike 2"}</div>
+                <div style="font-weight:800;color:var(--text-header);font-size:0.95rem;">🎮 Сбор пати: ${escapeHtml(m.game || "Counter-Strike 2")}</div>
                 <span style="font-size:0.75rem;font-weight:700;color:var(--green);">${filled}/5 игроков</span>
               </div>
               <div class="party-slots">${slotsMarkup}</div>
@@ -4644,8 +4658,8 @@
         if (m.replyTo && m.replyTo.sender) {
           replyHtml = `
             <div class="ds-reply-quote">
-              <span class="ds-reply-author">@${m.replyTo.sender}</span>
-              <span>${(m.replyTo.text || "Вложение").replace(/</g, "&lt;").slice(0, 70)}</span>
+              <span class="ds-reply-author">@${escapeHtml(m.replyTo.sender)}</span>
+              <span>${escapeHtml((m.replyTo.text || "Вложение").slice(0, 70))}</span>
             </div>
           `;
         }
@@ -4657,9 +4671,9 @@
         body.innerHTML = `
           ${replyHtml}
           <div class="ds-msg-header">
-            <span class="ds-msg-author" data-username="${m.sender || 'Участник'}" style="cursor:pointer;">${getSenderBadgeIcon(m)} ${m.sender || "Участник"}</span>
+            <span class="ds-msg-author" data-username="${escapeHtml(m.sender || 'Участник')}" style="cursor:pointer;">${getSenderBadgeIcon(m)} ${escapeHtml(m.sender || "Участник")}</span>
             ${getSenderRankPillHtml(m)}
-            <span class="ds-msg-time">Сегодня, в ${m.time || "12:00"} ${m.edited ? "(изменено)" : ""}${pinBadge}</span>
+            <span class="ds-msg-time">Сегодня, в ${escapeHtml(m.time || "12:00")} ${m.edited ? "(изменено)" : ""}${pinBadge}</span>
           </div>
           ${m.text ? `<div class="ds-msg-text" style="font-size:${window.chatFontSizePx || 15}px;">${formattedText}</div>` : ""}
           ${partyHtml}
@@ -5525,28 +5539,44 @@
         }
       };
 
-      pc.onconnectionstatechange = async () => {
-        if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      pc.__iceRestartInProgress = false;
+      pc.__iceRestartTimer = null;
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected" || pc.connectionState === "closed") {
+          if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+          pc.__iceRestartTimer = null;
+          pc.__iceRestartInProgress = false;
+          return;
+        }
+        if (pc.connectionState !== "failed" && pc.connectionState !== "disconnected") return;
+        if (!isInitiator || pc.__iceRestartInProgress || pc.signalingState !== "stable") return;
+        if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+        const retryDelay = pc.connectionState === "failed" ? 0 : 4000;
+        pc.__iceRestartTimer = setTimeout(async () => {
+          pc.__iceRestartTimer = null;
+          if (pc.connectionState === "closed" || pc.__iceRestartInProgress || pc.signalingState !== "stable") return;
+          pc.__iceRestartInProgress = true;
           try {
             pc.restartIce();
-            if (isInitiator) {
-              const offer = await pc.createOffer({ iceRestart: true });
-              offer.sdp = enhanceSdpForOpusHd(offer.sdp);
-              await pc.setLocalDescription(offer);
-              await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  from: currentUser.name,
-                  to: peerName,
-                  type: "offer",
-                  sdp: pc.localDescription.sdp,
-                  ts: Date.now()
-                })
-              }, 4500);
-            }
-          } catch (e) {}
-        }
+            const offer = await pc.createOffer({ iceRestart: true });
+            offer.sdp = enhanceSdpForOpusHd(offer.sdp);
+            await pc.setLocalDescription(offer);
+            const response = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: currentUser.name,
+                to: peerName,
+                type: "offer",
+                sdp: pc.localDescription.sdp,
+                ts: Date.now()
+              })
+            }, 4500);
+            if (!response.ok) throw new Error("ICE restart offer failed");
+          } catch (e) {
+            pc.__iceRestartInProgress = false;
+          }
+        }, retryDelay);
       };
 
       if (isInitiator) {
@@ -6873,7 +6903,7 @@ goto loop`;
 
     function isValidAppHtmlPayload(rawHtml) {
       if (!rawHtml || typeof rawHtml !== "string") return false;
-      if (rawHtml.length < 50000) return false;
+      if (rawHtml.length < 50000 || rawHtml.length > 12 * 1024 * 1024) return false;
       if (!rawHtml.includes("<html") || !rawHtml.includes("</html>") || !rawHtml.includes("MARKENS_BUILD_VERSION")) return false;
       if (/<script[^>]+src=/i.test(rawHtml)) return false;
       return true;
@@ -7143,7 +7173,14 @@ goto loop`;
           }
         }
 
-        const newTs = Number(rel.buildTs || Date.now());
+        const newTs = Number(rel.buildTs || 0);
+        if (!Number.isFinite(newTs) || newTs <= 0 || !rel.sha256 || !/^[a-f0-9]{64}$/i.test(String(rel.sha256))) {
+          throw new Error("Обновление отклонено: отсутствует корректная SHA-256 контрольная сумма.");
+        }
+        const downloadedHash = await computeSha256Browser(rel.fullHtml);
+        if (!downloadedHash || downloadedHash.toLowerCase() !== String(rel.sha256).toLowerCase()) {
+          throw new Error("Обновление отклонено: SHA-256 загруженного файла не совпадает.");
+        }
         markOtaSigApplied(rel.version, newTs);
         window.__installedAppVersion = rel.version;
         window.MARKENS_ACTIVE_VERSION = rel.version;
@@ -8036,7 +8073,12 @@ goto loop`;
       const banner = document.getElementById("replyComposeBanner");
       const txt = document.getElementById("replyBannerText");
       if (banner && txt) {
-        txt.innerHTML = `Ответ пользователю <b>@${msg.sender}</b>: ${(msg.text || "Вложение").slice(0, 45)}`;
+        txt.replaceChildren();
+        const label = document.createTextNode("Ответ пользователю ");
+        const author = document.createElement("b");
+        author.textContent = "@" + String(msg.sender || "Участник");
+        const preview = document.createTextNode(": " + String(msg.text || "Вложение").slice(0, 45));
+        txt.append(label, author, preview);
         banner.style.display = "flex";
       }
       document.getElementById("chatInput")?.focus();
