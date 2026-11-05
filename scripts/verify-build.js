@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
+const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 process.env.MARKENS_TEST_MODE = '1';
@@ -204,6 +205,39 @@ test('updater waits for a downloaded newer version before installing', async () 
   assert.equal(installed.ok, true);
   assert.equal(installed.installedVersion, 'v30.1.18');
   assert.deepEqual(fake.installArgs, [false, true]);
+});
+
+
+test('inline renderer JavaScript parses before a Windows build is accepted', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const blocks = [...html.matchAll(/<script\\b([^>]*)>([\\s\\S]*?)<\\/script>/gi)]
+    .filter((match) => !/\\bsrc\\s*=/.test(match[1]) && match[2].trim());
+  assert.ok(blocks.length > 0, 'index.html must contain an inline app script');
+  blocks.forEach((match, index) => {
+    new vm.Script(match[2], { filename: 'index.inline.' + index + '.js' });
+  });
+});
+
+test('chat delivery retries preserve messages and do not drop rapid sends', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.doesNotMatch(html, /__lastMsgSentTs/);
+  assert.match(html, /deliveryState: "sending"/);
+  assert.match(html, /function writeChatMessageToCloud/);
+  assert.match(html, /function retryPendingChatMessages/);
+  assert.match(html, /response && response\\.ok/);
+  assert.match(html, /__pendingChatRetryLocks/);
+  assert.match(html, /__channelFetchLocks/);
+  assert.match(html, /pendingLocal/);
+});
+
+test('calls require a live microphone and recover serialized WebRTC signaling', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /track\\.readyState === "live"/);
+  assert.match(html, /await ensureWebRtcPeerConnection\\(friendName, true/);
+  assert.match(html, /__webrtcPollsInFlight/);
+  assert.match(html, /retryOfferResponse/);
+  assert.match(html, /__iceRestartInProgress/);
+  assert.match(html, /failedBy: currentUser\\.name/);
 });
 
 (async () => {
