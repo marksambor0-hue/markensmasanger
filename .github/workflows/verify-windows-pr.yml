@@ -1,6 +1,9 @@
 name: Verify MARKENS Windows PR
 
 on:
+  push:
+    branches:
+      - fix/windows-stability-security-batch-1
   pull_request:
     branches:
       - main
