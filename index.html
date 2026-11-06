@@ -6404,9 +6404,10 @@
       document.getElementById("callAvRemote").style.display = "flex";
 
       if (activeDmCall) {
-        // DM and voice-room peers share the connection registry; ending one DM must not drop every room participant.
-        closePeerConnectionForUser(activeDmCall.peer);
-        const pKey = getWebRtcPairKey(activeDmCall.peer);
+        // Resolve the session key before closing the peer, because closing removes its stored signaling namespace.
+        const peerName = activeDmCall.peer;
+        const pKey = getWebRtcPairKey(peerName);
+        closePeerConnectionForUser(peerName);
         fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pKey)}.json`, { method: "DELETE" }, 3500).catch(() => {});
         try {
           await fetchWithTimeout(`${DB_URL}/dm_calls_v25/${activeDmCall.callId}.json`, { method: "DELETE" }, 3500);
