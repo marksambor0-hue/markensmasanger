@@ -4584,8 +4584,8 @@
             <div style="width:64px;height:64px;border-radius:50%;background:var(--bg-secondary);display:flex;align-items:center;justify-content:center;font-size:1.8rem;font-weight:700;color:var(--text-header);margin-bottom:12px;">
               ${isDmChat ? activeChannelTitle.charAt(0).toUpperCase() : "#"}
             </div>
-            <h2 style="font-size:1.5rem;font-weight:800;color:var(--text-header);margin-bottom:4px;">${activeChannelTitle}</h2>
-            <p style="font-size:0.9rem;color:var(--text-muted);">Это начало истории сообщений с ${activeChannelTitle}.</p>
+            <h2 style="font-size:1.5rem;font-weight:800;color:var(--text-header);margin-bottom:4px;">${escapeHtml(activeChannelTitle)}</h2>
+            <p style="font-size:0.9rem;color:var(--text-muted);">Это начало истории сообщений с ${escapeHtml(activeChannelTitle)}.</p>
           </div>
         `;
         return;
@@ -4593,6 +4593,9 @@
 
       msgs.forEach(m => {
         if (!m || typeof m !== "object") return;
+        if (typeof m.sender !== "string" || !m.sender.trim()) m.sender = "Участник";
+        else m.sender = m.sender.slice(0, 64);
+        const messageId = typeof m.id === "string" ? m.id.slice(0, 128) : String(m.id || "");
         const row = document.createElement("div");
         row.className = "ds-msg";
 
@@ -4604,19 +4607,27 @@
         body.className = "ds-msg-content";
 
         let mediaHtml = "";
-        if (m.mediaUrl) {
-          const isVid = m.mediaType === "video" || m.mediaUrl.startsWith("data:video/") || /\.(mp4|webm|mov|mkv|avi)(\?.*)?$/i.test(m.mediaUrl);
+        const rawMediaUrl = typeof m.mediaUrl === "string" ? m.mediaUrl : "";
+        const mediaIsSafe = isSafeMediaUrl(rawMediaUrl) &&
+          !/^data:image\/svg\+xml/i.test(rawMediaUrl) &&
+          !/^data:audio\//i.test(rawMediaUrl);
+        if (mediaIsSafe) {
+          const isVid = m.mediaType === "video" || /^data:video\//i.test(rawMediaUrl) || /\.(mp4|webm|mov|mkv|avi)(\?.*)?$/i.test(rawMediaUrl);
+          const safeMediaUrl = escapeHtml(rawMediaUrl);
           mediaHtml = isVid
-            ? `<video src="${m.mediaUrl}" controls playsinline preload="metadata" style="max-width:100%;max-height:280px;border-radius:8px;margin-top:6px;background:#000;display:block;"></video>`
-            : `<img src="${m.mediaUrl}" loading="lazy" style="max-width:100%;max-height:300px;border-radius:8px;margin-top:6px;display:block;object-fit:contain;" />`;
+            ? `<video src="${safeMediaUrl}" controls playsinline preload="metadata" style="max-width:100%;max-height:280px;border-radius:8px;margin-top:6px;background:#000;display:block;"></video>`
+            : `<img src="${safeMediaUrl}" loading="lazy" style="max-width:100%;max-height:300px;border-radius:8px;margin-top:6px;display:block;object-fit:contain;" />`;
         }
-        if (m.audioUrl) {
-          mediaHtml += `<audio src="${m.audioUrl}" controls style="height:34px;margin-top:6px;display:block;"></audio>`;
+        const rawAudioUrl = typeof m.audioUrl === "string" ? m.audioUrl : "";
+        const audioIsSafe = isSafeMediaUrl(rawAudioUrl) &&
+          (/^https?:\/\//i.test(rawAudioUrl) || /^blob:/i.test(rawAudioUrl) || /^data:audio\//i.test(rawAudioUrl));
+        if (audioIsSafe) {
+          mediaHtml += `<audio src="${escapeHtml(rawAudioUrl)}" controls style="height:34px;margin-top:6px;display:block;"></audio>`;
         }
 
         let reactHtml = "";
-        if (m.reactions && Object.keys(m.reactions).length) {
-          reactHtml = `<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">${Object.entries(m.reactions).map(([em, c]) => `<span style="background:var(--bg-secondary);border:1px solid var(--divider);border-radius:6px;padding:2px 8px;font-size:0.8rem;cursor:pointer;">${em} ${c}</span>`).join("")}</div>`;
+        if (m.reactions && typeof m.reactions === "object" && !Array.isArray(m.reactions) && Object.keys(m.reactions).length) {
+          reactHtml = `<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">${Object.entries(m.reactions).map(([em, c]) => `<span style="background:var(--bg-secondary);border:1px solid var(--divider);border-radius:6px;padding:2px 8px;font-size:0.8rem;cursor:pointer;">${escapeHtml(em.slice(0, 12))} ${escapeHtml(String(Number.isFinite(Number(c)) ? Number(c) : 0))}</span>`).join("")}</div>`;
         }
 
         let partyHtml = "";
@@ -4624,27 +4635,27 @@
           const slots = Array.isArray(m.slots) ? m.slots : [m.sender, null, null, null, null];
           const filled = slots.filter(Boolean).length;
           const slotsMarkup = slots.map((s, idx) =>
-            s ? `<div class="party-slot filled">👤 ${s}</div>`
+            s ? `<div class="party-slot filled">👤 ${escapeHtml(String(s).slice(0, 64))}</div>`
               : `<div class="party-slot">Слот ${idx + 1}</div>`
           ).join("");
           partyHtml = `
             <div class="ds-party-card">
               <div style="display:flex;justify-content:space-between;align-items:center;">
-                <div style="font-weight:800;color:var(--text-header);font-size:0.95rem;">🎮 Сбор пати: ${m.game || "Counter-Strike 2"}</div>
+                <div style="font-weight:800;color:var(--text-header);font-size:0.95rem;">🎮 Сбор пати: ${escapeHtml(String(m.game || "Counter-Strike 2").slice(0, 80))}</div>
                 <span style="font-size:0.75rem;font-weight:700;color:var(--green);">${filled}/5 игроков</span>
               </div>
               <div class="party-slots">${slotsMarkup}</div>
-              <button class="btn-join-party" data-partyid="${m.id}">${slots.includes(currentUser.name) ? "✓ Вы в лобби" : "+ Занять слот в пати"}</button>
+              <button class="btn-join-party" data-partyid="${escapeHtml(messageId)}">${slots.includes(currentUser.name) ? "✓ Вы в лобби" : "+ Занять слот в пати"}</button>
             </div>
           `;
         }
 
         let replyHtml = "";
-        if (m.replyTo && m.replyTo.sender) {
+        if (m.replyTo && typeof m.replyTo.sender === "string") {
           replyHtml = `
             <div class="ds-reply-quote">
-              <span class="ds-reply-author">@${m.replyTo.sender}</span>
-              <span>${(m.replyTo.text || "Вложение").replace(/</g, "&lt;").slice(0, 70)}</span>
+              <span class="ds-reply-author">@${escapeHtml(m.replyTo.sender.slice(0, 64))}</span>
+              <span>${escapeHtml(String(m.replyTo.text || "Вложение").slice(0, 70))}</span>
             </div>
           `;
         }
@@ -4656,9 +4667,9 @@
         body.innerHTML = `
           ${replyHtml}
           <div class="ds-msg-header">
-            <span class="ds-msg-author" data-username="${m.sender || 'Участник'}" style="cursor:pointer;">${getSenderBadgeIcon(m)} ${m.sender || "Участник"}</span>
+            <span class="ds-msg-author" data-username="${escapeHtml(m.sender)}" style="cursor:pointer;">${getSenderBadgeIcon(m)} ${escapeHtml(m.sender)}</span>
             ${getSenderRankPillHtml(m)}
-            <span class="ds-msg-time">Сегодня, в ${m.time || "12:00"} ${m.edited ? "(изменено)" : ""}${m.deliveryState === "sending" ? " • Отправка…" : (m.deliveryState === "pending" ? " • Не отправлено" : "")}${pinBadge}</span>
+            <span class="ds-msg-time">Сегодня, в ${escapeHtml(String(m.time || "12:00").slice(0, 24))} ${m.edited ? "(изменено)" : ""}${m.deliveryState === "sending" ? " • Отправка…" : (m.deliveryState === "pending" ? " • Не отправлено" : "")}${pinBadge}</span>
           </div>
           ${m.text ? `<div class="ds-msg-text" style="font-size:${window.chatFontSizePx || 15}px;">${formattedText}</div>` : ""}
           ${partyHtml}
@@ -4701,7 +4712,7 @@
 
         row.addEventListener("contextmenu", (e) => {
           e.preventDefault();
-          ctxTargetMsgId = m.id;
+          ctxTargetMsgId = messageId;
           ctxTargetMsgObj = m;
           const menu = document.getElementById("ctxMenu");
           menu.style.display = "flex";
