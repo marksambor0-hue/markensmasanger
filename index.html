@@ -3605,6 +3605,15 @@
       return /^(https?:\/\/|data:image\/|data:video\/|data:audio\/|blob:)/i.test(trimmed);
     }
 
+    function isSafeAvatarUrl(url) {
+      if (typeof url !== "string") return false;
+      const value = url.trim();
+      if (/^data:image\/svg\+xml/i.test(value)) return false;
+      return /^https?:\/\//i.test(value) ||
+        /^blob:/i.test(value) ||
+        /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(value);
+    }
+
     async function fetchWithTimeout(resource, options = {}, timeoutMs = 6500) {
       const controller = new AbortController();
       const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -3966,8 +3975,8 @@
 
       document.getElementById("dockName").textContent = isOwn ? `👑 ${currentUser.name}` : currentUser.name;
       document.getElementById("rpName").innerHTML = isOwn
-        ? `${currentUser.name} <span class="owner-tag" style="margin-left:4px;">Создатель</span>`
-        : currentUser.name;
+        ? `${escapeHtml(currentUser.name)} <span class="owner-tag" style="margin-left:4px;">Создатель</span>`
+        : escapeHtml(currentUser.name);
       document.getElementById("rpRole").textContent = isOwn ? "Владелец мессенджера и сервера VORTEX" : "В сети";
       const rpGameSec = document.getElementById("rpGameSection");
       if (currentUser.game && currentUser.game !== "NONE" && currentUser.game !== "Нет игры") {
@@ -3980,9 +3989,10 @@
       const stCls = (currentUser.status === "Не активен") ? "idle" : ((currentUser.status === "Не беспокоить") ? "dnd" : ((currentUser.status === "Невидимка") ? "offline" : ""));
       const dockAv = document.getElementById("dockAvatar");
       const rpAv = document.getElementById("rpAvatar");
-      if (currentUser.avatar && isSafeMediaUrl(currentUser.avatar)) {
-        if (dockAv) dockAv.innerHTML = `<img src="${currentUser.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot ${stCls}" id="dockStatusDot"></span>`;
-        if (rpAv) rpAv.innerHTML = `<img src="${currentUser.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot ${stCls}"></span>`;
+      if (currentUser.avatar && isSafeAvatarUrl(currentUser.avatar)) {
+        const safeAvatarUrl = escapeHtml(currentUser.avatar.trim());
+        if (dockAv) dockAv.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot ${stCls}" id="dockStatusDot"></span>`;
+        if (rpAv) rpAv.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot ${stCls}"></span>`;
       } else {
         if (dockAv) dockAv.innerHTML = `<span class="av-letter">${letter}</span><span class="status-dot ${stCls}" id="dockStatusDot"></span>`;
         if (rpAv) rpAv.innerHTML = `<span class="av-letter">${letter}</span><span class="status-dot ${stCls}"></span>`;
@@ -4230,14 +4240,14 @@
       fetch(`${DB_URL}/channels_v22/${encodeURIComponent(activeChannel)}.json`, { method: "DELETE" }).catch(() => {});
     };
     document.getElementById("btnAdminCreateRoom").onclick = () => {
-      const rName = document.getElementById("inpNewRoomName").value.trim();
+      const rName = document.getElementById("inpNewRoomName").value.trim().slice(0, 64);
       if (!rName) return;
       document.getElementById("inpNewRoomName").value = "";
       const rId = "room_" + Date.now();
       const scroller = document.querySelector("#sidebarModeServer .sidebar-scroller");
       const row = document.createElement("div");
       row.className = "nav-row vc-row";
-      row.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/></svg><span>${rName}</span>`;
+      row.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/></svg><span>${escapeHtml(rName)}</span>`;
       const tree = document.createElement("div");
       tree.className = "vc-tree";
       tree.id = "tree_" + rId;
@@ -4245,7 +4255,7 @@
         playSound("join");
         document.getElementById("rtcPanel").style.display = "flex";
         document.getElementById("rtcRoomLabel").textContent = "VORTEX / " + rName;
-        tree.innerHTML = `<div class="vc-user"><div class="vc-av">${currentUser.name.charAt(0).toUpperCase()}</div><span>${currentUser.name}</span></div>`;
+        tree.innerHTML = `<div class="vc-user"><div class="vc-av">${escapeHtml(currentUser.name.charAt(0).toUpperCase())}</div><span>${escapeHtml(currentUser.name)}</span></div>`;
       };
       scroller.appendChild(row);
       scroller.appendChild(tree);
@@ -4256,10 +4266,16 @@
     // FRIENDS HUB ENGINE (With Real-Time Online / Offline Status Everywhere)
     function ensureSidebarDmRow(friendNick) {
       const list = document.getElementById("dmSidebarList");
-      let existing = list.querySelector(`[data-friend="${friendNick.toLowerCase()}"]`);
-      const stCls = getFriendStatusClass(friendNick);
+      if (typeof friendNick !== "string" || !friendNick.trim()) return null;
+      friendNick = friendNick.trim().slice(0, 64);
+      let existing = Array.from(list.querySelectorAll(".dm-row[data-friendname]"))
+        .find(row => (row.getAttribute("data-friendname") || "").toLowerCase() === friendNick.toLowerCase()) || null;
+      const stClsRaw = getFriendStatusClass(friendNick);
+      const stCls = ["offline", "idle", "dnd"].includes(stClsRaw) ? stClsRaw : "";
       const subTxt = getFriendSubText(friendNick);
       const isOn = isFriendTrulyOnline(friendNick);
+      const safeFriendName = escapeHtml(friendNick);
+      const safeSubText = escapeHtml(String(subTxt || "").slice(0, 120));
 
       if (!existing) {
         existing = document.createElement("div");
@@ -4269,16 +4285,16 @@
         existing.style.opacity = isOn ? "1" : "0.65";
         const isMarkensFriend = friendNick.toLowerCase() === "markens";
         const nameMarkup = isMarkensFriend
-          ? `👑 ${friendNick} <span class="vortex-rank-pill rank-creator-overlord" style="margin-left:4px;font-size:0.62rem;">Создатель</span>`
-          : friendNick;
+          ? `👑 ${safeFriendName} <span class="vortex-rank-pill rank-creator-overlord" style="margin-left:4px;font-size:0.62rem;">Создатель</span>`
+          : safeFriendName;
         existing.innerHTML = `
           <div class="avatar-32">
-            <span>${friendNick.charAt(0).toUpperCase()}</span>
+            <span>${escapeHtml(friendNick.charAt(0).toUpperCase())}</span>
             <span class="status-dot ${stCls}"></span>
           </div>
           <div class="dm-row-text">
             <div class="dm-row-name">${nameMarkup}</div>
-            <div class="dm-row-sub">${subTxt}</div>
+            <div class="dm-row-sub">${safeSubText}</div>
           </div>
         `;
         existing.onclick = () => {
@@ -4293,7 +4309,7 @@
         const dot = existing.querySelector(".status-dot");
         if (dot) dot.className = "status-dot" + (stCls ? " " + stCls : "");
         const sub = existing.querySelector(".dm-row-sub");
-        if (sub) sub.textContent = subTxt;
+        if (sub) sub.textContent = String(subTxt || "").slice(0, 120);
       }
       return existing;
     }
@@ -4340,14 +4356,18 @@
       const pList = document.getElementById("pendingRequestsList");
       pList.innerHTML = "";
       pendingInvites.forEach(inv => {
-        const invStCls = getFriendStatusClass(inv.from);
+        if (!inv || typeof inv.from !== "string" || !inv.from.trim()) return;
+        const inviteName = inv.from.trim().slice(0, 64);
+        const safeInviteName = escapeHtml(inviteName);
+        const invStRaw = getFriendStatusClass(inviteName);
+        const invStCls = ["offline", "idle", "dnd"].includes(invStRaw) ? invStRaw : "";
         const item = document.createElement("div");
         item.className = "friend-list-item";
         item.innerHTML = `
           <div class="friend-item-left">
-            <div class="avatar-32"><span>${inv.from.charAt(0).toUpperCase()}</span><span class="status-dot ${invStCls}"></span></div>
+            <div class="avatar-32"><span>${escapeHtml(inviteName.charAt(0).toUpperCase())}</span><span class="status-dot ${invStCls}"></span></div>
             <div>
-              <div style="font-weight:700;color:var(--text-header);font-size:0.94rem;">${inv.from}</div>
+              <div style="font-weight:700;color:var(--text-header);font-size:0.94rem;">${safeInviteName}</div>
               <div style="font-size:0.78rem;color:var(--text-muted);">Входящий запрос дружбы</div>
             </div>
           </div>
@@ -4403,21 +4423,26 @@
 
       myFriends.forEach(fn => {
         const isOn = isFriendTrulyOnline(fn);
-        const stCls = getFriendStatusClass(fn);
-        const subTxt = getFriendSubText(fn);
+        if (typeof fn !== "string" || !fn.trim()) return;
+        const friendName = fn.trim().slice(0, 64);
+        const safeFriendName = escapeHtml(friendName);
+        const stClsRaw = getFriendStatusClass(friendName);
+        const stCls = ["offline", "idle", "dnd"].includes(stClsRaw) ? stClsRaw : "";
+        const subTxt = getFriendSubText(friendName);
+        const safeSubText = escapeHtml(String(subTxt || "").slice(0, 120));
         const row = document.createElement("div");
         row.className = "friend-list-item";
         row.style.opacity = isOn ? "1" : "0.68";
-        const isMarkensFriend = fn.toLowerCase() === "markens";
+        const isMarkensFriend = friendName.toLowerCase() === "markens";
         const nameMarkup = isMarkensFriend
-          ? `👑 ${fn} <span class="vortex-rank-pill rank-creator-overlord" style="margin-left:6px;font-size:0.65rem;">Создатель</span>`
-          : fn;
+          ? `👑 ${safeFriendName} <span class="vortex-rank-pill rank-creator-overlord" style="margin-left:6px;font-size:0.65rem;">Создатель</span>`
+          : safeFriendName;
         row.innerHTML = `
           <div class="friend-item-left">
-            <div class="avatar-32"><span>${fn.charAt(0).toUpperCase()}</span><span class="status-dot ${stCls}"></span></div>
+            <div class="avatar-32"><span>${escapeHtml(friendName.charAt(0).toUpperCase())}</span><span class="status-dot ${stCls}"></span></div>
             <div>
               <div style="font-weight:700;color:var(--text-header);font-size:0.95rem;">${nameMarkup}</div>
-              <div style="font-size:0.78rem;color:${isOn ? 'var(--text-muted)' : '#80848e'};">${subTxt} — Нажмите, чтобы открыть чат</div>
+              <div style="font-size:0.78rem;color:${isOn ? 'var(--text-muted)' : '#80848e'};">${safeSubText} — Нажмите, чтобы открыть чат</div>
             </div>
           </div>
           <div class="friend-item-actions">
@@ -4426,7 +4451,7 @@
             </button>
           </div>
         `;
-        row.onclick = () => openDmWithFriend(fn);
+        row.onclick = () => openDmWithFriend(friendName);
         fList.appendChild(row);
       });
     }
@@ -4502,21 +4527,30 @@
       document.getElementById("globalFbCountLabel").textContent = `Предложения участников — ${globalFeedbacks.length}`;
 
       globalFeedbacks.forEach(item => {
+        if (!item || typeof item !== "object") return;
+        const feedbackId = typeof item.id === "string" ? item.id.slice(0, 128) : "";
+        if (!feedbackId) return;
+        const feedbackAuthor = escapeHtml(String(item.author || "Участник").slice(0, 64));
+        const feedbackCategory = escapeHtml(String(item.category || "Идея").slice(0, 40));
+        const feedbackTime = escapeHtml(String(item.time || "Сегодня").slice(0, 40));
+        const feedbackText = escapeHtml(String(item.text || "").slice(0, 3000));
+        const feedbackStatus = escapeHtml(String(item.status || "Новое").slice(0, 40));
+        const feedbackVotes = Math.max(0, Math.min(999999, Math.floor(Number(item.votes) || 1)));
         const row = document.createElement("div");
         row.style.cssText = "background:var(--bg-secondary);border:1px solid var(--divider);border-radius:8px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;";
         row.innerHTML = `
           <div style="display:flex;align-items:center;gap:12px;min-width:0;flex:1;">
-            <button class="gfb-vote" data-id="${item.id}" style="background:var(--bg-primary);border:1px solid var(--divider);color:var(--text-header);padding:6px 10px;border-radius:6px;font-size:0.8rem;font-weight:700;cursor:pointer;">▲ ${item.votes || 1}</button>
+            <button class="gfb-vote" data-id="${escapeHtml(feedbackId)}" style="background:var(--bg-primary);border:1px solid var(--divider);color:var(--text-header);padding:6px 10px;border-radius:6px;font-size:0.8rem;font-weight:700;cursor:pointer;">▲ ${feedbackVotes}</button>
             <div style="min-width:0;flex:1;">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
-                <span style="background:var(--bg-tertiary);color:var(--text-muted);font-size:0.68rem;font-weight:700;padding:2px 6px;border-radius:4px;text-transform:uppercase;">${item.category || "Идея"}</span>
-                <span style="font-weight:700;color:var(--text-header);font-size:0.88rem;">${item.author}</span>
-                <span style="font-size:0.72rem;color:var(--text-muted);">${item.time || "Сегодня"}</span>
+                <span style="background:var(--bg-tertiary);color:var(--text-muted);font-size:0.68rem;font-weight:700;padding:2px 6px;border-radius:4px;text-transform:uppercase;">${feedbackCategory}</span>
+                <span style="font-weight:700;color:var(--text-header);font-size:0.88rem;">${feedbackAuthor}</span>
+                <span style="font-size:0.72rem;color:var(--text-muted);">${feedbackTime}</span>
               </div>
-              <div style="font-size:0.92rem;color:var(--text-normal);word-break:break-word;">${(item.text || "").replace(/</g, "&lt;")}</div>
+              <div style="font-size:0.92rem;color:var(--text-normal);word-break:break-word;">${feedbackText}</div>
             </div>
           </div>
-          <span class="gfb-status" data-id="${item.id}" style="background:var(--bg-tertiary);color:var(--green);font-size:0.72rem;font-weight:700;padding:4px 9px;border-radius:4px;cursor:${currentUser.isOwner ? 'pointer' : 'default'};">${item.status || "Новое"}</span>
+          <span class="gfb-status" data-id="${escapeHtml(feedbackId)}" style="background:var(--bg-tertiary);color:var(--green);font-size:0.72rem;font-weight:700;padding:4px 9px;border-radius:4px;cursor:${currentUser.isOwner ? 'pointer' : 'default'};">${feedbackStatus}</span>
         `;
         container.appendChild(row);
       });
@@ -9477,10 +9511,13 @@ goto loop
         if (!prefs || typeof prefs !== "object" || prefs.error) return;
 
         let changed = false;
-        if (prefs.avatar && prefs.avatar !== currentUser.avatar) {
-          currentUser.avatar = prefs.avatar;
-          document.querySelector("#dockAvatar").innerHTML = `<img src="${prefs.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot" id="dockStatusDot"></span>`;
-          document.querySelector("#rpAvatar").innerHTML = `<img src="${prefs.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot"></span>`;
+        if (typeof prefs.avatar === "string" && isSafeAvatarUrl(prefs.avatar) && prefs.avatar !== currentUser.avatar) {
+          const safeAvatarUrl = escapeHtml(prefs.avatar.trim());
+          currentUser.avatar = prefs.avatar.trim();
+          const dockAvatar = document.querySelector("#dockAvatar");
+          const profileAvatar = document.querySelector("#rpAvatar");
+          if (dockAvatar) dockAvatar.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot" id="dockStatusDot"></span>`;
+          if (profileAvatar) profileAvatar.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot"></span>`;
           changed = true;
         }
         if (prefs.bio !== undefined && prefs.bio !== currentUser.bio) {
