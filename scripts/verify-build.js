@@ -481,6 +481,83 @@ test('outgoing invites and call state updates are not silently ignored', () => {
   assert.match(html, /busyBy: currentUser\.name/);
 });
 
+test('direct-call signaling is isolated by unique call ID', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /__markensSignalingPairKey/);
+  assert.match(html, /baseKey \+ "__dm_" \+ callId/);
+  assert.match(html, /pc\.__markensSignalingPairKey = pairKey/);
+});
+
+test('DM reply previews and voice-note payloads are encrypted before cloud writes', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /cloudPayload\.replyTo\.text = encryptDmPayload/);
+  assert.match(html, /cloudPayload\.replyTo\.e2ee = true/);
+  assert.match(html, /cloudPayload\.audioUrl = encryptDmPayload/);
+  assert.match(html, /cloudPayload\.audioUrlE2ee = true/);
+  assert.match(html, /m\.replyTo\.e2ee/);
+  assert.match(html, /m\.audioUrlE2ee/);
+});
+
+test('DM replies are bound to the original channel and decrypt only for local preview', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /function getPlainChatMessageText/);
+  assert.match(html, /window\.__activeReplyChannel = activeChannel/);
+  assert.match(html, /window\.__activeReplyChannel === channelKey/);
+  assert.match(html, /getPlainChatMessageText\(window\.activeReplyTarget, channelKey, messageIsDm\)/);
+  assert.match(html, /window\.__activeReplyChannel = null/);
+});
+
+test('DM edits use encrypted cloud patches and failed edits enter the retry queue', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /async function patchEditedChatMessage/);
+  assert.match(html, /message\.editPending = true/);
+  assert.match(html, /myLast\.editPending = true/);
+  assert.match(html, /queuedMessage\.editPending === true/);
+  assert.match(html, /message\._localDm = editIsDm/);
+  assert.match(html, /myLast\._localDm = editIsDm/);
+});
+
+test('voice notes use the reliable queue and keep their original channel during recording', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /const recordingChannel = activeChannel/);
+  assert.match(html, /const recordingIsDm = isDmChat/);
+  assert.match(html, /sendChatMessage\("Голосовое сообщение", reader\.result, "audio"/);
+  assert.match(html, /channelKey: recordingChannel/);
+  assert.match(html, /blob\.size > 2 \* 1024 \* 1024/);
+  assert.match(html, /voiceRec\.start\(1000\)/);
+  assert.match(html, /120000/);
+});
+
+test('media attachments are size-limited before FileReader loads them into local storage', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function stageMediaFileForChat');
+  const end = html.indexOf('function clearStagedMedia', start);
+  const stage = html.slice(start, end);
+  assert.match(stage, /maxAttachmentBytes = 4 \* 1024 \* 1024/);
+  assert.match(stage, /allowedImage/);
+  assert.match(stage, /allowedVideo/);
+  assert.match(stage, /file\.size > maxAttachmentBytes/);
+});
+
+test('late ICE candidates are drained again after the active publisher finishes', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /A candidate can arrive between the empty-queue check and this finally block/);
+  assert.match(html, /pc\.__pendingIceCandidates\.size > 0/);
+  assert.match(html, /flushLocalIceCandidateQueue\(pc, pairKey, peerName\)\.catch/);
+});
+
+test('failed chat edits and sends are retained and retried without unhandled promise rejections', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function retryPendingChatMessages');
+  const end = html.indexOf('async function fetchChannelMessages', start);
+  const retry = html.slice(start, end);
+  assert.match(retry, /m\.editPending === true/);
+  assert.match(retry, /patchEditedChatMessage\(key, queuedMessage/);
+  assert.match(retry, /writeChatMessageToCloud\(key, queuedMessage/);
+  assert.match(retry, /Could not prepare queued message for delivery/);
+  assert.match(retry, /__pendingChatRetryLocks\.delete\(key\)/);
+});
+
 (async () => {
   let failures = 0;
   for (const item of tests) {
