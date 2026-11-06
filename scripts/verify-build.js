@@ -324,6 +324,15 @@ test('incoming call validation accepts unique per-attempt IDs only for the corre
   assert.match(validator, /\^\\d\{10,16\}_\[a-z0-9\]\{8,32\}\$/i);
 });
 
+test('ending a direct call closes only its peer and preserves other voice-room peer connections', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function endDmCall');
+  const end = html.indexOf('document.getElementById("btnStartDmVoiceCall")', start);
+  const ending = html.slice(start, end);
+  assert.match(ending, /closePeerConnectionForUser\(activeDmCall\.peer\)/);
+  assert.doesNotMatch(ending, /closeAllPeerConnections\(\)/);
+});
+
 test('each DM call gets a unique per-attempt record ID instead of reusing the pair ID', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function startDmCall');
