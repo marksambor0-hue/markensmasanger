@@ -6064,6 +6064,31 @@
       if (!activeDmCall || !activeDmCall.callId || activeDmCall.isCaller) return;
       const acceptedCall = activeDmCall;
 
+      // The caller may have cancelled while the incoming modal was still visible.
+      let liveCallRecord = null;
+      try {
+        const verificationResponse = await fetchWithTimeout(
+          `${DB_URL}/dm_calls_v25/${encodeURIComponent(acceptedCall.callId)}.json`,
+          { cache: "no-store" },
+          5000
+        );
+        if (verificationResponse && verificationResponse.ok) liveCallRecord = await verificationResponse.json();
+      } catch (_verificationError) {}
+      const incomingStillValid = isValidIncomingDmCall(
+        liveCallRecord,
+        acceptedCall.callId,
+        currentUser.name,
+        Date.now()
+      ) &&
+        String(liveCallRecord.caller).toLowerCase() === String(acceptedCall.peer).toLowerCase() &&
+        liveCallRecord.type === acceptedCall.type;
+      if (!incomingStillValid) {
+        acceptedCall.state = "failed";
+        clearDmCallConnectWatchdog();
+        showDmCallFailureStage(acceptedCall, "Этот вызов уже завершён или сервер временно недоступен. Начните новый звонок.");
+        return;
+      }
+
       const acceptedStream = await acquireLocalMediaStream(acceptedCall.type === "video");
       if (!acceptedStream || !acceptedStream.getAudioTracks().some(track => track.readyState === "live")) {
         acceptedCall.state = "failed";
@@ -6236,11 +6261,22 @@
           } else if (activeDmCall.__recordPublished) {
             activeDmCall.__missingRecordPolls = (activeDmCall.__missingRecordPolls || 0) + 1;
             if (activeDmCall.__missingRecordPolls >= 3) {
-              activeDmCall.state = "failed";
+              const missedIncomingWasStillRinging = !activeDmCall.isCaller && activeDmCall.state === "calling";
+              const missingCall = activeDmCall;
+              missingCall.state = "failed";
               clearDmCallConnectWatchdog();
               stopRingtone();
-              setDmCallStatusText("Звонок завершён другой стороной.");
-              closePeerConnectionForUser(activeDmCall.peer);
+              if (missedIncomingWasStillRinging) {
+                const incomingModal = document.getElementById("incomingCallModal");
+                if (incomingModal) incomingModal.style.display = "none";
+                setDmCallStatusText("Вызов отменён собеседником.");
+              } else {
+                setDmCallStatusText("Звонок завершён другой стороной.");
+              }
+              closePeerConnectionForUser(missingCall.peer);
+              if (missedIncomingWasStillRinging && activeDmCall && activeDmCall.callId === missingCall.callId) {
+                activeDmCall = null;
+              }
               return;
             }
           }
