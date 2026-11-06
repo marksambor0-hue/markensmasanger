@@ -6366,8 +6366,9 @@
       document.getElementById("callAvLocal").style.display = "flex";
       document.getElementById("callAvRemote").style.display = "flex";
 
-      closeAllPeerConnections();
       if (activeDmCall) {
+        // DM and voice-room peers share the connection registry; ending one DM must not drop every room participant.
+        closePeerConnectionForUser(activeDmCall.peer);
         const pKey = getWebRtcPairKey(activeDmCall.peer);
         fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pKey)}.json`, { method: "DELETE" }, 3500).catch(() => {});
         try {
