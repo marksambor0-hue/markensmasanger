@@ -4622,7 +4622,7 @@
         messagesScroller.innerHTML = `
           <div style="padding:24px 16px;">
             <div style="width:64px;height:64px;border-radius:50%;background:var(--bg-secondary);display:flex;align-items:center;justify-content:center;font-size:1.8rem;font-weight:700;color:var(--text-header);margin-bottom:12px;">
-              ${isDmChat ? activeChannelTitle.charAt(0).toUpperCase() : "#"}
+              ${isDmChat ? escapeHtml(String(activeChannelTitle).charAt(0).toUpperCase()) : "#"}
             </div>
             <h2 style="font-size:1.5rem;font-weight:800;color:var(--text-header);margin-bottom:4px;">${escapeHtml(activeChannelTitle)}</h2>
             <p style="font-size:0.9rem;color:var(--text-muted);">Это начало истории сообщений с ${escapeHtml(activeChannelTitle)}.</p>
@@ -4635,7 +4635,8 @@
         if (!m || typeof m !== "object") return;
         if (typeof m.sender !== "string" || !m.sender.trim()) m.sender = "Участник";
         else m.sender = m.sender.slice(0, 64);
-        const messageId = typeof m.id === "string" ? m.id.slice(0, 128) : String(m.id || "");
+        const messageId = typeof m.id === "string" ? m.id.slice(0, 128) : String(m.id || "").slice(0, 128);
+        const chatFontSizePx = Math.min(24, Math.max(12, Number(window.chatFontSizePx) || 15));
         const row = document.createElement("div");
         row.className = "ds-msg";
 
@@ -4711,7 +4712,7 @@
             ${getSenderRankPillHtml(m)}
             <span class="ds-msg-time">Сегодня, в ${escapeHtml(String(m.time || "12:00").slice(0, 24))} ${m.edited ? "(изменено)" : ""}${m.deliveryState === "sending" ? " • Отправка…" : (m.deliveryState === "pending" ? " • Не отправлено" : "")}${pinBadge}</span>
           </div>
-          ${m.text ? `<div class="ds-msg-text" style="font-size:${window.chatFontSizePx || 15}px;">${formattedText}</div>` : ""}
+          ${m.text ? `<div class="ds-msg-text" style="font-size:${chatFontSizePx}px;">${formattedText}</div>` : ""}
           ${partyHtml}
           ${mediaHtml}
           ${reactHtml}
@@ -9091,7 +9092,7 @@ goto loop`;
           dockNameEl.textContent = `👑 ${currentUser.name}`;
         } else if (inVortex && isViewingVortexServer()) {
           const rk = getVortexRankInfo(currentUser.level || 3, currentUser.name);
-          dockNameEl.innerHTML = `${currentUser.badge || "🎯"} ${escapeHtml(currentUser.name)} <span class="vortex-rank-pill" style="margin-left:4px;">${escapeHtml(rk.title)}</span>`;
+          dockNameEl.innerHTML = `${escapeHtml(String(currentUser.badge || "🎯").slice(0, 12))} ${escapeHtml(currentUser.name)} <span class="vortex-rank-pill" style="margin-left:4px;">${escapeHtml(rk.title)}</span>`;
         } else {
           dockNameEl.textContent = currentUser.name;
         }
