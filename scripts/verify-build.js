@@ -324,6 +324,18 @@ test('calls require a live microphone and recover serialized WebRTC signaling', 
   assert.match(html, /failedBy: currentUser\.name/);
 });
 
+test('microphone DSP context resumes before publishing a processed audio track and falls back to raw capture', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function acquireLocalMediaStream');
+  const end = html.indexOf('function getWebRtcPairKey', start);
+  const capture = html.slice(start, end);
+  assert.match(capture, /await localStudioAudioCtx\.resume\(\)/);
+  assert.match(capture, /localStudioAudioCtx\.state !== "running"/);
+  assert.match(capture, /processedAudioTracks\.length/);
+  assert.match(capture, /localMediaStream = rawStream/);
+  assert.match(capture, /using the real microphone track/);
+});
+
 test('DM calls cannot show connected before the real remote audio path is ready', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const match = html.match(/function isDmCallMediaReady\(pc\) \{[\s\S]*?\n    \}/);
