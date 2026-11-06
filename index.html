@@ -6357,14 +6357,23 @@
             activeDmCall.__missingRecordPolls = 0;
 
             if (["failed", "busy", "ended"].includes(currentRecord.state)) {
-              activeDmCall.state = "failed";
+              const wasIncomingRing = !activeDmCall.isCaller && activeDmCall.state === "calling";
+              const failedCall = activeDmCall;
+              failedCall.state = "failed";
               clearDmCallConnectWatchdog();
               stopRingtone();
               const message = currentRecord.state === "busy"
                 ? "Собеседник уже разговаривает."
                 : (currentRecord.state === "ended" ? "Собеседник завершил звонок." : "Не удалось подключить собеседника.");
-              setDmCallStatusText(message);
-              closePeerConnectionForUser(activeDmCall.peer);
+              closePeerConnectionForUser(failedCall.peer);
+              if (wasIncomingRing) {
+                const incomingModal = document.getElementById("incomingCallModal");
+                if (incomingModal) incomingModal.style.display = "none";
+                setDmCallStatusText(message);
+                if (activeDmCall && activeDmCall.callId === failedCall.callId) activeDmCall = null;
+              } else {
+                showDmCallFailureStage(failedCall, message);
+              }
               return;
             }
 
