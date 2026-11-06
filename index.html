@@ -5462,16 +5462,28 @@
       __dmCallConnectTimer = setTimeout(async () => {
         __dmCallConnectTimer = null;
         if (!activeDmCall || activeDmCall.callId !== callId || activeDmCall.state === "connected") return;
-        activeDmCall.state = "failed";
+        const timedOutUnacceptedIncoming = !activeDmCall.isCaller && activeDmCall.state === "calling";
+        const failedCall = activeDmCall;
+        failedCall.state = "failed";
         stopRingtone();
-        setDmCallStatusText(failureMessage || "Не удалось установить соединение. Проверьте интернет и попробуйте ещё раз.");
+        const message = failureMessage || "Не удалось установить соединение. Проверьте интернет и попробуйте ещё раз.";
+        if (timedOutUnacceptedIncoming) {
+          const incomingModal = document.getElementById("incomingCallModal");
+          if (incomingModal) incomingModal.style.display = "none";
+          setDmCallStatusText("Время ожидания входящего звонка истекло.");
+        } else {
+          showDmCallFailureStage(failedCall, message);
+        }
         await patchDmCallRecord(callId, {
           state: "failed",
           failedBy: currentUser.name,
-          failureReason: failureMessage || "connection-timeout",
+          failureReason: message,
           ts: Date.now()
         });
         if (activeDmCall && activeDmCall.callId === callId) closePeerConnectionForUser(activeDmCall.peer);
+        if (timedOutUnacceptedIncoming && activeDmCall && activeDmCall.callId === callId) {
+          activeDmCall = null;
+        }
       }, timeoutMs);
     }
 
@@ -5511,6 +5523,24 @@
           activeDmCall.state === "failed") return;
       activeDmCall.state = "connecting";
       if (message) setDmCallStatusText(message);
+    }
+
+    function showDmCallFailureStage(call, message) {
+      if (!call || !call.peer) return;
+      const incomingModal = document.getElementById("incomingCallModal");
+      if (incomingModal) incomingModal.style.display = "none";
+      try { openDmWithFriend(call.peer); } catch (_error) {}
+      const stage = document.getElementById("dmCallStage");
+      if (stage) stage.style.display = "flex";
+      const remoteName = document.getElementById("callNameRemote");
+      const remoteAvatar = document.getElementById("callAvRemote");
+      const localName = document.getElementById("callNameLocal");
+      const localAvatar = document.getElementById("callAvLocal");
+      if (remoteName) remoteName.textContent = call.peer;
+      if (remoteAvatar) remoteAvatar.textContent = call.peer.charAt(0).toUpperCase();
+      if (localName) localName.textContent = currentUser.name + " (Вы)";
+      if (localAvatar) localAvatar.textContent = currentUser.name.charAt(0).toUpperCase();
+      setDmCallStatusText(message || "Звонок не состоялся. Можно завершить вызов и попробовать снова.");
     }
 
     function isValidIncomingDmCall(call, callId, currentUserName, now = Date.now()) {
@@ -6038,7 +6068,7 @@
       if (!acceptedStream || !acceptedStream.getAudioTracks().some(track => track.readyState === "live")) {
         acceptedCall.state = "failed";
         clearDmCallConnectWatchdog();
-        setDmCallStatusText("Не удалось получить доступ к микрофону. Звонок не подключён.");
+        showDmCallFailureStage(acceptedCall, "Не удалось получить доступ к микрофону. Звонок не подключён. Проверьте разрешения Windows.");
         await patchDmCallRecord(acceptedCall.callId, { state: "failed", failedBy: currentUser.name, ts: Date.now() });
         return;
       }
@@ -6047,7 +6077,7 @@
       if (!acceptedPc) {
         acceptedCall.state = "failed";
         clearDmCallConnectWatchdog();
-        setDmCallStatusText("Не удалось подготовить аудиосоединение. Проверьте микрофон и повторите попытку.");
+        showDmCallFailureStage(acceptedCall, "Не удалось подготовить аудиосоединение. Проверьте микрофон и повторите попытку.");
         await patchDmCallRecord(acceptedCall.callId, { state: "failed", failedBy: currentUser.name, ts: Date.now() });
         return;
       }
