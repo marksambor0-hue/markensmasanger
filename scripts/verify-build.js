@@ -357,6 +357,17 @@ test('missed incoming calls release the single-call lock and accepted-call failu
   assert.match(html, /showDmCallFailureStage\(acceptedCall, "Не удалось подготовить аудиосоединение/);
 });
 
+test('remote-ended or failed incoming calls hide the ringtone modal and release call state', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function checkIncomingDmCalls');
+  const end = html.indexOf('// SERVER VOICE ROOMS', start);
+  const poller = html.slice(start, end);
+  assert.match(poller, /const wasIncomingRing = !activeDmCall\.isCaller && activeDmCall\.state === "calling"/);
+  assert.match(poller, /if \(incomingModal\) incomingModal\.style\.display = "none"/);
+  assert.match(poller, /if \(activeDmCall && activeDmCall\.callId === failedCall\.callId\) activeDmCall = null/);
+  assert.match(poller, /showDmCallFailureStage\(failedCall, message\)/);
+});
+
 test('incoming calls are revalidated before microphone capture and cancelled rings release state', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /const verificationResponse = await fetchWithTimeout/);
