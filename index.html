@@ -3487,6 +3487,19 @@
       try { localStorage.removeItem(k); } catch (e) {}
     }
 
+    function safeParseStoredJson(key, fallbackValue) {
+      const raw = safeGet(key);
+      if (typeof raw !== "string" || !raw.trim()) return fallbackValue;
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed === null || parsed === undefined ? fallbackValue : parsed;
+      } catch (error) {
+        console.warn("Discarding corrupted local MARKENS data:", key, error);
+        safeRemove(key);
+        return fallbackValue;
+      }
+    }
+
     // =========================================================================
     // MARKENS SECURITY SHIELD v26.0 (Anti-XSS, SHA-256 Auth, OTA Signature, DM Cipher)
     // =========================================================================
@@ -3645,7 +3658,13 @@
     let ctxTargetMsgId = null;
     let ctxTargetMsgObj = null;
 
-    let localChannelStore = JSON.parse(safeGet("markens_msgs_clean", "{}"));
+    const savedChannelStore = safeParseStoredJson("markens_msgs_clean", {});
+    let localChannelStore = (savedChannelStore && typeof savedChannelStore === "object" && !Array.isArray(savedChannelStore))
+      ? Object.assign(Object.create(null), savedChannelStore)
+      : Object.create(null);
+    for (const key of Object.keys(localChannelStore)) {
+      if (!Array.isArray(localChannelStore[key])) localChannelStore[key] = [];
+    }
     if (!localChannelStore["патчноуты-игр-steam"] || !localChannelStore["патчноуты-игр-steam"].length || localChannelStore["патчноуты-игр-steam"].length <= 5) {
       localChannelStore["патчноуты-игр-steam"] = [
         {
@@ -3701,8 +3720,8 @@
       }
     }
 
-    let myFriends = JSON.parse(safeGet("markens_friends_clean", "[]"));
-    let pendingInvites = JSON.parse(safeGet("markens_invites_clean", "[]"));
+    let myFriends = safeParseStoredJson("markens_friends_clean", []);
+    let pendingInvites = safeParseStoredJson("markens_invites_clean", []);
     myFriends = Array.isArray(myFriends)
       ? Array.from(new Set(myFriends.filter(name => typeof name === "string" && name.trim()).map(name => name.trim().slice(0, 64))))
       : [];
@@ -4500,7 +4519,8 @@
     document.getElementById("btnQuickAddDM").onclick = () => { showFriendsHub(); switchFriendsTab("add"); };
 
     // GLOBAL FEEDBACK BOARD (Accessible outside any server!)
-    let globalFeedbacks = JSON.parse(safeGet("markens_global_fb_clean", "[]"));
+    let globalFeedbacks = safeParseStoredJson("markens_global_fb_clean", []);
+    if (!Array.isArray(globalFeedbacks)) globalFeedbacks = [];
     if (!globalFeedbacks.length) {
       globalFeedbacks = [
         { id: "fb_welcome", author: "markens", isOwner: true, category: "Идея", text: "Оставляйте здесь свои идеи и пожелания по мессенджеру — раздел доступен всем пользователям сразу после входа.", votes: 1, status: "Активно", time: "Сегодня" }
