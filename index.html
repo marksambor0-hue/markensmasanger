@@ -5115,20 +5115,38 @@
       };
     });
     document.getElementById("ctxCopy").onclick = () => {
-      if (ctxTargetMsgObj?.text) navigator.clipboard?.writeText(ctxTargetMsgObj.text).catch(() => {});
+      if (!ctxTargetMsgObj?.text) return;
+      const copyText = getPlainChatMessageText(ctxTargetMsgObj, activeChannel, isDmChat);
+      navigator.clipboard?.writeText(copyText).catch(() => {});
     };
-    document.getElementById("ctxEdit").onclick = () => {
+    document.getElementById("ctxEdit").onclick = async () => {
       if (!ctxTargetMsgObj) return;
-      const t = prompt("Изменить сообщение:", ctxTargetMsgObj.text || "");
-      if (t !== null) {
-        ctxTargetMsgObj.text = t;
-        ctxTargetMsgObj.edited = true;
-        saveLocalStore();
-        renderChatMessages(localChannelStore[activeChannel]);
-        fetch(`${DB_URL}/channels_v22/${encodeURIComponent(activeChannel)}/${encodeURIComponent(ctxTargetMsgObj.id)}.json`, {
-          method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: t, edited: true })
-        }).catch(() => {});
+      const editChannel = activeChannel;
+      const editIsDm = isDmChat;
+      const message = ctxTargetMsgObj;
+      const currentText = getPlainChatMessageText(message, editChannel, editIsDm);
+      const t = prompt("Изменить сообщение:", currentText || "");
+      if (t === null) return;
+      const nextText = String(t).slice(0, 4000);
+      message.text = nextText;
+      message.e2ee = editIsDm || !!message.e2ee;
+      message.edited = true;
+      saveLocalStore();
+      if (activeChannel === editChannel) renderChatMessages(localChannelStore[editChannel] || []);
+      const cloudText = editIsDm ? encryptDmPayload(nextText, editChannel) : nextText;
+      let saved = false;
+      for (let attempt = 1; attempt <= 3 && !saved; attempt++) {
+        try {
+          const response = await fetchWithTimeout(`${DB_URL}/channels_v22/${encodeURIComponent(editChannel)}/${encodeURIComponent(message.id)}.json`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(editIsDm ? { text: cloudText, e2ee: true, edited: true } : { text: cloudText, edited: true })
+          }, 7000);
+          saved = !!(response && response.ok);
+        } catch (_error) {}
+        if (!saved && attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 400));
       }
+      if (!saved) console.warn("Edited message remains locally cached; cloud update will need retry:", message.id);
     };
     document.getElementById("ctxDelete").onclick = () => {
       if (!ctxTargetMsgObj) return;
@@ -8442,21 +8460,35 @@ goto loop`;
     }
 
     // --- ARROW UP TO EDIT LAST MESSAGE ---
-    chatInput.addEventListener("keydown", (e) => {
+    chatInput.addEventListener("keydown", async (e) => {
       if (e.key === "ArrowUp" && !chatInput.value.trim()) {
-        const msgs = localChannelStore[activeChannel] || [];
-        const myLast = [...msgs].reverse().find(m => m.sender === currentUser.name && m.text);
+        const editChannel = activeChannel;
+        const editIsDm = isDmChat;
+        const msgs = localChannelStore[editChannel] || [];
+        const myLast = [...msgs].reverse().find(m => m && m.sender === currentUser.name && m.text);
         if (myLast) {
           e.preventDefault();
-          const newText = prompt("Изменить последнее сообщение:", myLast.text);
+          const currentText = getPlainChatMessageText(myLast, editChannel, editIsDm);
+          const newText = prompt("Изменить последнее сообщение:", currentText);
           if (newText !== null && newText.trim()) {
-            myLast.text = newText.trim();
+            const nextText = String(newText).trim().slice(0, 4000);
+            myLast.text = nextText;
+            myLast.e2ee = editIsDm || !!myLast.e2ee;
             myLast.edited = true;
             saveLocalStore();
-            renderChatMessages(localChannelStore[activeChannel]);
-            fetch(`${DB_URL}/channels_v22/${encodeURIComponent(activeChannel)}/${myLast.id}.json`, {
-              method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: myLast.text, edited: true })
-            }).catch(() => {});
+            if (activeChannel === editChannel) renderChatMessages(localChannelStore[editChannel] || []);
+            const cloudText = editIsDm ? encryptDmPayload(nextText, editChannel) : nextText;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                const response = await fetchWithTimeout(`${DB_URL}/channels_v22/${encodeURIComponent(editChannel)}/${myLast.id}.json`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(editIsDm ? { text: cloudText, e2ee: true, edited: true } : { text: cloudText, edited: true })
+                }, 7000);
+                if (response && response.ok) break;
+              } catch (_error) {}
+              if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 400));
+            }
           }
         }
       }
