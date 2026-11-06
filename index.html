@@ -8594,12 +8594,14 @@ goto loop`;
     }
 
     function startReplyToMessage(msg) {
-      if (!msg) return;
+      if (!msg || typeof msg !== "object") return;
       window.activeReplyTarget = msg;
       const banner = document.getElementById("replyComposeBanner");
       const txt = document.getElementById("replyBannerText");
       if (banner && txt) {
-        txt.innerHTML = `Ответ пользователю <b>@${msg.sender}</b>: ${(msg.text || "Вложение").slice(0, 45)}`;
+        const sender = typeof msg.sender === "string" ? msg.sender.slice(0, 64) : "Участник";
+        const preview = typeof msg.text === "string" ? msg.text.slice(0, 45) : "Вложение";
+        txt.innerHTML = `Ответ пользователю <b>@${escapeHtml(sender)}</b>: ${escapeHtml(preview)}`;
         banner.style.display = "flex";
       }
       document.getElementById("chatInput")?.focus();
@@ -8906,13 +8908,14 @@ goto loop`;
     }
 
     function getSenderBadgeIcon(m) {
-      if (!m || !m.sender) return "";
-      const isMarkens = m.sender.toLowerCase() === "markens";
+      const sender = m && typeof m.sender === "string" ? m.sender : "";
+      if (!sender) return "";
+      const isMarkens = sender.toLowerCase() === "markens";
       if (isMarkens) return "👑 ";
       if (isDmChat || !isCurrentUserInVortex()) return "";
-      if (m.sender === "Steam PatchBot") return "🤖 ";
-      const b = (m.senderBadge && m.senderBadge !== "👑") ? m.senderBadge : "🎯";
-      return b + " ";
+      if (sender === "Steam PatchBot") return "🤖 ";
+      const rawBadge = (typeof m.senderBadge === "string" && m.senderBadge !== "👑") ? m.senderBadge : "🎯";
+      return escapeHtml(rawBadge.slice(0, 12)) + " ";
     }
 
     function getSenderRankPillHtml(m) {
