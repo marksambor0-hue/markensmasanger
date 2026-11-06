@@ -5378,6 +5378,11 @@
       if (localMediaStream && !forceRestart) {
         const hasVid = localMediaStream.getVideoTracks().length > 0;
         if (!needVideo || hasVid) {
+          if (localStudioAudioCtx && localStudioAudioCtx.state === "suspended") {
+            try { await localStudioAudioCtx.resume(); } catch (_resumeError) {
+              console.warn("Studio audio context could not resume; keeping current capture:", _resumeError);
+            }
+          }
           localMediaStream.getAudioTracks().forEach(t => {
             t.enabled = isPushToTalkMode ? isPttPressed : !isMicMuted;
           });
@@ -5413,6 +5418,12 @@
               try { await localStudioAudioCtx.close(); } catch (_e) {}
             }
             localStudioAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+            if (localStudioAudioCtx.state === "suspended") {
+              await localStudioAudioCtx.resume();
+            }
+            if (localStudioAudioCtx.state !== "running") {
+              throw new Error("Studio audio context did not enter the running state");
+            }
             const source = localStudioAudioCtx.createMediaStreamSource(rawStream);
 
             // 1. High-Pass Filter (срезает низкочастотный гул кулеров ПК, микрофонной стойки и дыхания ниже 85 Гц)
@@ -5440,14 +5451,26 @@
             localVoiceCompressor.connect(localMicGainNode);
             localMicGainNode.connect(dest);
 
+            const processedAudioTracks = dest.stream.getAudioTracks().filter(track => track.readyState === "live");
+            if (!processedAudioTracks.length) {
+              throw new Error("Studio audio pipeline produced no live microphone track");
+            }
             const combined = new MediaStream();
-            dest.stream.getAudioTracks().forEach(t => {
+            processedAudioTracks.forEach(t => {
               t.enabled = isPushToTalkMode ? isPttPressed : !isMicMuted;
               combined.addTrack(t);
             });
             rawStream.getVideoTracks().forEach(t => combined.addTrack(t));
             localMediaStream = combined;
           } catch (gainErr) {
+            console.warn("Studio audio processing unavailable; using the real microphone track:", gainErr);
+            if (localStudioAudioCtx && localStudioAudioCtx.state !== "closed") {
+              try { await localStudioAudioCtx.close(); } catch (_closeError) {}
+            }
+            localStudioAudioCtx = null;
+            localHighPassFilter = null;
+            localVoiceCompressor = null;
+            localMicGainNode = null;
             localMediaStream = rawStream;
             localMediaStream.getAudioTracks().forEach(t => {
               t.enabled = isPushToTalkMode ? isPttPressed : !isMicMuted;
