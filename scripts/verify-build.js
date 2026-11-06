@@ -271,6 +271,15 @@ test('call acceptance is not treated as a completed call and timeout paths are b
   assert.doesNotMatch(html, /acceptedCall\.state\s*=\s*"connected"/);
 });
 
+test('missed incoming calls release the single-call lock and accepted-call failures expose hangup controls', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /function showDmCallFailureStage\(call, message\)/);
+  assert.match(html, /const timedOutUnacceptedIncoming = !activeDmCall\.isCaller && activeDmCall\.state === "calling"/);
+  assert.match(html, /if \(timedOutUnacceptedIncoming && activeDmCall && activeDmCall\.callId === callId\)\s*\{\s*activeDmCall = null;\s*\}/);
+  assert.match(html, /showDmCallFailureStage\(acceptedCall, "Не удалось получить доступ к микрофону/);
+  assert.match(html, /showDmCallFailureStage\(acceptedCall, "Не удалось подготовить аудиосоединение/);
+});
+
 test('SDP answers are retried after failed Firebase writes', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /pc\.__pendingSdpAnswer/);
