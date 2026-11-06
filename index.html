@@ -5662,7 +5662,10 @@
       const callee = call.callee.trim().toLowerCase();
       const current = String(currentUserName || "").trim().toLowerCase();
       if (!caller || !callee || !current || caller === callee || caller === current || callee !== current) return false;
-      if (callId.toLowerCase() !== [caller, callee].sort().join("_")) return false;
+      const expectedPairPrefix = [caller, callee].sort().join("_") + "_";
+      if (!callId.toLowerCase().startsWith(expectedPairPrefix) ||
+          callId.length <= expectedPairPrefix.length ||
+          !/^\d{10,16}_[a-z0-9]{8,32}$/i.test(callId.slice(expectedPairPrefix.length))) return false;
       if (call.state !== "calling" || !["voice", "video"].includes(call.type)) return false;
       const ts = Number(call.ts);
       return Number.isFinite(ts) && ts <= now + 5000 && now - ts >= 0 && now - ts < 35000;
