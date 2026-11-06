@@ -6033,7 +6033,7 @@
             const candidateLooksValid = candidateText !== null && (candidateText === "" || /^candidate:/i.test(candidateText));
             const itemTs = Number(item.ts);
             const itemIsFresh = Number.isFinite(itemTs) && itemTs <= iceNow + 5000 && iceNow - itemTs >= 0 && iceNow - itemTs <= 120000;
-            const senderMatches = !item.from || (typeof item.from === "string" && item.from.toLowerCase() === peerName.toLowerCase());
+            const senderMatches = typeof item.from === "string" && item.from.trim().toLowerCase() === peerName.toLowerCase();
             if (!candidateLooksValid || !itemIsFresh || !senderMatches) continue;
             try {
               await pc.addIceCandidate(candidate);
