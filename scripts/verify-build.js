@@ -218,6 +218,33 @@ test('inline renderer JavaScript parses before a Windows build is accepted', () 
   });
 });
 
+test('profile and friend UI escapes account names and validates avatar URLs', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /function isSafeAvatarUrl\(url\)/);
+  assert.match(html, /isSafeAvatarUrl\(currentUser\.avatar\)/);
+  assert.match(html, /const safeAvatarUrl = escapeHtml\(currentUser\.avatar\.trim\(\)\)/);
+  assert.match(html, /isSafeAvatarUrl\(prefs\.avatar\)/);
+  assert.match(html, /escapeHtml\(currentUser\.name\)/);
+  const sidebar = html.slice(html.indexOf('function ensureSidebarDmRow'), html.indexOf('function refreshAllSidebarDmStatuses'));
+  assert.match(sidebar, /querySelectorAll\("\.dm-row\[data-friendname\]"\)/);
+  assert.match(sidebar, /escapeHtml\(friendNick\)/);
+  const friends = html.slice(html.indexOf('function renderFriendsHub'), html.indexOf('async function sendFriendRequest'));
+  assert.match(friends, /escapeHtml\(inviteName\)/);
+  assert.match(friends, /escapeHtml\(friendName\)/);
+});
+
+test('global feedback cards escape all cloud-sourced text and identifiers', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function renderGlobalFeedbackList');
+  const end = html.indexOf('async function submitGlobalFeedback', start);
+  const renderer = html.slice(start, end);
+  assert.match(renderer, /escapeHtml\(String\(item\.author/);
+  assert.match(renderer, /escapeHtml\(String\(item\.category/);
+  assert.match(renderer, /escapeHtml\(String\(item\.text/);
+  assert.match(renderer, /escapeHtml\(String\(item\.status/);
+  assert.doesNotMatch(renderer, /data-id="\$\{item\.id\}"/);
+});
+
 test('remote chat messages escape untrusted HTML and reject unsafe media URLs', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const renderStart = html.indexOf('function renderChatMessages(msgs)');
