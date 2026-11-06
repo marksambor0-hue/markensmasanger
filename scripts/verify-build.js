@@ -314,6 +314,16 @@ test('chat delivery retries preserve messages and do not drop rapid sends', () =
   assert.match(html, /pendingLocal/);
 });
 
+test('incoming call validation accepts unique per-attempt IDs only for the correct caller/callee pair', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function isValidIncomingDmCall');
+  const end = html.indexOf('function ', start + 20);
+  const validator = html.slice(start, end);
+  assert.match(validator, /expectedPairPrefix = \[caller, callee\]\.sort\(\)\.join\("_"\) \+ "_"/);
+  assert.match(validator, /callId\.slice\(expectedPairPrefix\.length\)/);
+  assert.match(validator, /\^\\d\{10,16\}_\[a-z0-9\]\{8,32\}\$/i);
+});
+
 test('each DM call gets a unique per-attempt record ID instead of reusing the pair ID', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function startDmCall');
