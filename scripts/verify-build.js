@@ -295,6 +295,13 @@ test('remote chat messages escape untrusted HTML and reject unsafe media URLs', 
   assert.match(replyFn, /escapeHtml\(preview\)/);
 });
 
+test('chat message IDs use a collision-resistant random suffix', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /window\.crypto && typeof window\.crypto\.randomUUID === "function"/);
+  assert.match(html, /randomUUID\(\)\.replace\(\/-\/g, ""\)/);
+  assert.match(html, /randomMessageId\.slice\(0, 24\)/);
+});
+
 test('chat delivery retries preserve messages and do not drop rapid sends', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.doesNotMatch(html, /__lastMsgSentTs/);
