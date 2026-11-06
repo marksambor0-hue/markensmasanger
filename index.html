@@ -6165,7 +6165,11 @@
     // 1-on-1 DM CALLS CONTROLLER
     async function startDmCall(friendName, type = "voice") {
       if (!friendName || friendName.toLowerCase() === currentUser.name.toLowerCase() || activeDmCall) return;
-      const callId = [currentUser.name.toLowerCase(), friendName.toLowerCase()].sort().join("_");
+      const callPairKey = [currentUser.name.toLowerCase(), friendName.toLowerCase()].sort().join("_");
+      const callNonce = (window.crypto && typeof window.crypto.randomUUID === "function")
+        ? window.crypto.randomUUID().replace(/-/g, "")
+        : (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+      const callId = callPairKey + "_" + Date.now() + "_" + callNonce.slice(0, 20);
       activeDmCall = {
         peer: friendName,
         type,
