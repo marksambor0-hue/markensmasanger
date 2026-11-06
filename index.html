@@ -3703,13 +3703,19 @@
 
     let myFriends = JSON.parse(safeGet("markens_friends_clean", "[]"));
     let pendingInvites = JSON.parse(safeGet("markens_invites_clean", "[]"));
+    myFriends = Array.isArray(myFriends)
+      ? Array.from(new Set(myFriends.filter(name => typeof name === "string" && name.trim()).map(name => name.trim().slice(0, 64))))
+      : [];
+    pendingInvites = Array.isArray(pendingInvites)
+      ? pendingInvites.filter(invite => invite && typeof invite.from === "string" && invite.from.trim())
+      : [];
     window.livePresenceMap = {};
 
     function getPresenceEntry(username) {
       if (!username) return null;
       const target = username.toLowerCase();
       for (const [k, v] of Object.entries(window.livePresenceMap || {})) {
-        if (k.toLowerCase() === target || (v && v.user && v.user.toLowerCase() === target)) {
+        if (k.toLowerCase() === target || (v && typeof v.user === "string" && v.user.toLowerCase() === target)) {
           return v;
         }
       }
@@ -6462,9 +6468,9 @@
         const tree = document.getElementById("tree_" + rId);
         if (tree) {
           tree.innerHTML = `
-            <div class="vc-user" data-user="${currentUser.name}">
-              <div class="vc-av">${currentUser.name.charAt(0).toUpperCase()}</div>
-              <span style="font-weight:600;font-size:0.84rem;color:var(--text-header);">${currentUser.name}</span>
+            <div class="vc-user" data-user="${escapeHtml(currentUser.name)}">
+              <div class="vc-av">${escapeHtml(currentUser.name.charAt(0).toUpperCase())}</div>
+              <span style="font-weight:600;font-size:0.84rem;color:var(--text-header);">${escapeHtml(currentUser.name)}</span>
               <div class="voice-wave-bars">
                 <span class="voice-bar"></span>
                 <span class="voice-bar"></span>
@@ -7021,28 +7027,61 @@
 
     // Custom avatar
     document.getElementById("inpCustomAvatar").onchange = (e) => {
-      const f = e.target.files[0];
+      const f = e.target.files && e.target.files[0];
       if (!f) return;
+      if (!/^image\/(?:png|jpeg|gif|webp|avif)$/i.test(f.type) || f.size > 5 * 1024 * 1024) {
+        alert("Выберите изображение PNG, JPG, GIF, WEBP или AVIF размером не более 5 МБ.");
+        e.target.value = "";
+        return;
+      }
       const r = new FileReader();
       r.onload = () => {
-        currentUser.avatar = r.result;
+        const avatarUrl = typeof r.result === "string" && isSafeAvatarUrl(r.result) ? r.result : "";
+        if (!avatarUrl) {
+          alert("Не удалось прочитать выбранное изображение.");
+          return;
+        }
+        currentUser.avatar = avatarUrl;
         saveSessionPermanently(currentUser);
-        document.querySelector("#dockAvatar").innerHTML = `<img src="${r.result}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot" id="dockStatusDot"></span>`;
-        document.querySelector("#rpAvatar").innerHTML = `<img src="${r.result}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot"></span>`;
+        const safeAvatarUrl = escapeHtml(avatarUrl);
+        const dockAvatar = document.querySelector("#dockAvatar");
+        const profileAvatar = document.querySelector("#rpAvatar");
+        if (dockAvatar) dockAvatar.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot" id="dockStatusDot"></span>`;
+        if (profileAvatar) profileAvatar.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot"></span>`;
       };
+      r.onerror = () => alert("Ошибка чтения файла изображения.");
       r.readAsDataURL(f);
     };
 
     // Steam save
     document.getElementById("btnSaveSteam").onclick = () => {
-      const url = document.getElementById("inpSteamUrl").value.trim();
+      const rawUrl = document.getElementById("inpSteamUrl").value.trim();
+      let safeSteamUrl = "";
+      if (rawUrl) {
+        try {
+          const parsedSteamUrl = new URL(rawUrl);
+          if (parsedSteamUrl.protocol !== "https:" ||
+              !["steamcommunity.com", "www.steamcommunity.com"].includes(parsedSteamUrl.hostname.toLowerCase()) ||
+              !/^\/(?:profiles|id)\/[a-zA-Z0-9_-]{2,64}\/?$/.test(parsedSteamUrl.pathname)) {
+            throw new Error("Invalid Steam profile URL");
+          }
+          safeSteamUrl = parsedSteamUrl.href;
+        } catch (_error) {
+          const steamFeedback = document.getElementById("steamFeedback");
+          if (steamFeedback) {
+            steamFeedback.textContent = "Укажите официальную ссылку профиля Steam (steamcommunity.com/id/... или /profiles/...).";
+            steamFeedback.style.color = "var(--red)";
+          }
+          return;
+        }
+      }
       const game = document.getElementById("selCurrentGame").value;
       currentUser.game = game;
-      currentUser.steamUrl = url;
+      currentUser.steamUrl = safeSteamUrl;
       saveSessionPermanently(currentUser);
       document.getElementById("rpGame").textContent = game;
-      document.getElementById("rpSteamInfo").innerHTML = url
-        ? `<a href="${url}" target="_blank" style="color:var(--green);text-decoration:underline;">Профиль Steam ↗</a>`
+      document.getElementById("rpSteamInfo").innerHTML = safeSteamUrl
+        ? `<a href="${escapeHtml(safeSteamUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--green);text-decoration:underline;">Профиль Steam ↗</a>`
         : "Активность Steam";
       const b = document.getElementById("btnSaveSteam");
       b.textContent = "Сохранено!";
@@ -7243,7 +7282,9 @@ goto loop`;
           if (vData && typeof vData === "object" && !vData.error) {
             const now = Date.now();
             Object.values(vData).forEach(v => {
-              if (!v || !v.roomId || !v.user) return;
+              if (!v || typeof v.user !== "string" || !v.user.trim() ||
+                  typeof v.roomId !== "string" || !/^room_[a-zA-Z0-9_-]{1,64}$/.test(v.roomId)) return;
+              v.user = v.user.trim().slice(0, 64);
               if (v.user.toLowerCase() === currentUser.name.toLowerCase() && !currentVoiceRoom) return;
               if (v.ts && now - v.ts > 20000) return;
               if (v.roomId === "room_cinema" && v.user.toLowerCase() !== currentUser.name.toLowerCase()) {
@@ -7260,16 +7301,17 @@ goto loop`;
                 const row = document.createElement("div");
                 row.className = "vc-user" + (isSpeaking ? " speaking" : "");
                 row.setAttribute("data-user", v.user);
+                const safeVoiceUser = escapeHtml(v.user);
                 row.innerHTML = `
-                  <div class="vc-av ${isSpeaking ? 'speaking' : ''}">${v.user.charAt(0).toUpperCase()}</div>
-                  <span style="font-weight:600;font-size:0.84rem;color:var(--text-header);">${v.user}</span>
+                  <div class="vc-av ${isSpeaking ? 'speaking' : ''}">${escapeHtml(v.user.charAt(0).toUpperCase())}</div>
+                  <span style="font-weight:600;font-size:0.84rem;color:var(--text-header);">${safeVoiceUser}</span>
                   <div class="voice-wave-bars ${isSpeaking ? 'speaking' : ''}">
                     <span class="voice-bar"></span>
                     <span class="voice-bar"></span>
                     <span class="voice-bar"></span>
                   </div>
                   <span style="font-size:0.75rem;margin-left:4px;">${isDeaf ? "🔕" : (isMuted ? "🔇" : "🎙️")}</span>
-                  ${!isMe ? `<button class="vc-vol-badge" data-voluser="${v.user}" title="Громкость пользователя">🔊 ${userVol}%</button>` : ""}
+                  ${!isMe ? `<button class="vc-vol-badge" data-voluser="${safeVoiceUser}" title="Громкость пользователя">🔊 ${userVol}%</button>` : ""}
                 `;
                 if (!isMe) {
                   row.querySelector(".vc-vol-badge")?.addEventListener("click", (e) => {
@@ -8682,7 +8724,7 @@ goto loop`;
         card.className = "pin-card";
         card.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-weight:700;color:var(--text-header);font-size:0.84rem;">${m.sender}</span>
+            <span style="font-weight:700;color:var(--text-header);font-size:0.84rem;">${escapeHtml(String(m.sender || "Участник").slice(0, 64))}</span>
             <button class="unpin-btn" style="background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:0.75rem;" title="Открепить">✕</button>
           </div>
           <div style="font-size:0.85rem;color:var(--text-normal);word-break:break-word;">${formatChatMarkdown(m.text || "Вложение")}</div>
