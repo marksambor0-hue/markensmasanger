@@ -218,6 +218,25 @@ test('inline renderer JavaScript parses before a Windows build is accepted', () 
   });
 });
 
+test('remote chat messages escape untrusted HTML and reject unsafe media URLs', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const renderStart = html.indexOf('function renderChatMessages(msgs)');
+  const renderEnd = html.indexOf('\n    function ', renderStart + 20);
+  assert.ok(renderStart >= 0 && renderEnd > renderStart, 'renderChatMessages must be present');
+  const renderer = html.slice(renderStart, renderEnd);
+  assert.match(renderer, /isSafeMediaUrl\(rawMediaUrl\)/);
+  assert.match(renderer, /escapeHtml\(rawMediaUrl\)/);
+  assert.match(renderer, /escapeHtml\(rawAudioUrl\)/);
+  assert.match(renderer, /escapeHtml\(m\.sender\)/);
+  assert.match(renderer, /escapeHtml\(m\.replyTo\.sender\.slice/);
+  assert.match(renderer, /escapeHtml\(String\(s\)\.slice/);
+  assert.doesNotMatch(renderer, /src="\$\{m\.mediaUrl\}"/);
+  assert.doesNotMatch(renderer, /src="\$\{m\.audioUrl\}"/);
+  const replyFn = html.slice(html.indexOf('function startReplyToMessage'), html.indexOf('function cancelReplyMode'));
+  assert.match(replyFn, /escapeHtml\(sender\)/);
+  assert.match(replyFn, /escapeHtml\(preview\)/);
+});
+
 test('chat delivery retries preserve messages and do not drop rapid sends', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.doesNotMatch(html, /__lastMsgSentTs/);
