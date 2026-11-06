@@ -240,6 +240,53 @@ test('calls require a live microphone and recover serialized WebRTC signaling', 
   assert.match(html, /failedBy: currentUser\.name/);
 });
 
+test('DM calls cannot show connected before the real remote audio path is ready', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const match = html.match(/function isDmCallMediaReady\(pc\) \{[\s\S]*?\n    \}/);
+  assert.ok(match, 'isDmCallMediaReady must exist in the renderer');
+  const readiness = vm.runInNewContext('(' + match[0].replace(/^function isDmCallMediaReady\(pc\)\s*/, 'function (pc) ') + ')');
+  const ready = {
+    connectionState: 'connected',
+    __markensRemoteAudioTrack: { kind: 'audio', readyState: 'live', muted: false },
+    __markensAudioPlaybackReady: true
+  };
+  assert.equal(readiness(ready), true);
+  assert.equal(readiness({ ...ready, connectionState: 'connecting' }), false);
+  assert.equal(readiness({ ...ready, __markensRemoteAudioTrack: null }), false);
+  assert.equal(readiness({ ...ready, __markensRemoteAudioTrack: { kind: 'audio', readyState: 'live', muted: true } }), false);
+  assert.equal(readiness({ ...ready, __markensRemoteAudioTrack: { kind: 'audio', readyState: 'ended', muted: false } }), false);
+  assert.equal(readiness({ ...ready, __markensAudioPlaybackReady: false }), false);
+});
+
+test('call acceptance is not treated as a completed call and timeout paths are bounded', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /state: "accepted"/);
+  assert.match(html, /state = "connecting"/);
+  assert.match(html, /armDmCallConnectWatchdog/);
+  assert.match(html, /currentRecord\.state === "accepted"/);
+  assert.match(html, /activeDmCall\.state = "connected"/);
+  assert.match(html, /maybeMarkDmCallConnected\(peerName, pc\)/);
+  assert.doesNotMatch(html, /acceptedCall\.state = "connected"/);
+});
+
+test('SDP answers are retried after failed Firebase writes', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /pc\.__pendingSdpAnswer/);
+  assert.match(html, /answerRetryResponse && answerRetryResponse\.ok/);
+  assert.match(html, /Initial WebRTC answer could not be delivered/);
+  assert.match(html, /ICE restart offer could not be delivered/);
+  assert.match(html, /pc\.__lastSdpPublishTs = Date\.now\(\)/);
+});
+
+test('outgoing invites and call state updates are not silently ignored', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /invitePublished/);
+  assert.match(html, /patchDmCallRecord/);
+  assert.match(html, /activeDmCall\.__missingRecordPolls/);
+  assert.match(html, /hasLiveAudioSender/);
+  assert.match(html, /busyBy: currentUser\.name/);
+});
+
 (async () => {
   let failures = 0;
   for (const item of tests) {
