@@ -218,6 +218,29 @@ test('inline renderer JavaScript parses before a Windows build is accepted', () 
   });
 });
 
+test('voice-room member names and pinned-message authors are escaped', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const remoteVoiceStart = html.indexOf('Object.values(vData).forEach(v => {');
+  const remoteVoiceEnd = html.indexOf('FULL WEBRTC P2P MESH', remoteVoiceStart);
+  const remoteVoice = html.slice(remoteVoiceStart, remoteVoiceEnd);
+  assert.match(remoteVoice, /typeof v\.user !== "string"/);
+  assert.match(remoteVoice, /escapeHtml\(v\.user\.charAt\(0\)\.toUpperCase\(\)\)/);
+  assert.match(remoteVoice, /const safeVoiceUser = escapeHtml\(v\.user\)/);
+  assert.match(remoteVoice, /data-voluser="\$\{safeVoiceUser\}"/);
+  const pinStart = html.indexOf('function renderPinnedPopover');
+  const pinEnd = html.indexOf('function ', pinStart + 20);
+  assert.match(html.slice(pinStart, pinEnd), /escapeHtml\(String\(m\.sender/);
+});
+
+test('custom avatars are type/size limited and Steam links are restricted to Steam Community HTTPS', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /f\.size > 5 \* 1024 \* 1024/);
+  assert.match(html, /isSafeAvatarUrl\(r\.result\)/);
+  assert.match(html, /parsedSteamUrl\.protocol !== "https:"/);
+  assert.match(html, /steamcommunity\.com/);
+  assert.match(html, /rel="noopener noreferrer"/);
+});
+
 test('profile and friend UI escapes account names and validates avatar URLs', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /function isSafeAvatarUrl\(url\)/);
