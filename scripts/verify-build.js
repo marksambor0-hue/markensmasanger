@@ -324,6 +324,17 @@ test('calls require a live microphone and recover serialized WebRTC signaling', 
   assert.match(html, /failedBy: currentUser\.name/);
 });
 
+test('microphone streams and WebAudio contexts are released after calls or voice-room leave', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /async function stopLocalMediaCapture\(\)/);
+  assert.match(html, /trackSet\.forEach\(track =>/);
+  assert.match(html, /track\.stop\(\)/);
+  assert.match(html, /await audioContext\.close\(\)/);
+  assert.match(html, /async function releaseLocalMediaIfIdle\(\)/);
+  assert.match(html, /if \(currentVoiceRoom \|\| dmCallStillNeedsMic\) return false/);
+  assert.match(html, /await releaseLocalMediaIfIdle\(\)/);
+});
+
 test('microphone DSP context resumes before publishing a processed audio track and falls back to raw capture', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function acquireLocalMediaStream');
