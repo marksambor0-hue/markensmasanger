@@ -218,6 +218,14 @@ test('inline renderer JavaScript parses before a Windows build is accepted', () 
   });
 });
 
+test('chat avatar characters, font-size styles, and profile badges cannot inject markup', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /escapeHtml\(String\(activeChannelTitle\)\.charAt\(0\)\.toUpperCase\(\)\)/);
+  assert.match(html, /const chatFontSizePx = Math\.min\(24, Math\.max\(12, Number\(window\.chatFontSizePx\) \|\| 15\)\)/);
+  assert.match(html, /font-size:\$\{chatFontSizePx\}px/);
+  assert.match(html, /escapeHtml\(String\(currentUser\.badge \|\| "🎯"\)\.slice\(0, 12\)\)/);
+});
+
 test('voice-room member names and pinned-message authors are escaped', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const remoteVoiceStart = html.indexOf('Object.values(vData).forEach(v => {');
