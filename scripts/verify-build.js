@@ -312,6 +312,12 @@ test('ICE candidate delivery retries idempotently and never silently drops a can
   assert.match(html, /__icePublishRetryTimer/);
 });
 
+test('remote ICE candidates must have a matching authenticated signaling peer name', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /const senderMatches = typeof item\.from === "string" && item\.from\.trim\(\)\.toLowerCase\(\) === peerName\.toLowerCase\(\)/);
+  assert.match(html, /if \(!candidateLooksValid \|\| !itemIsFresh \|\| !senderMatches\) continue/);
+});
+
 test('outgoing calls are not invited when local SDP offer creation fails', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /Could not create the initial WebRTC offer/);
