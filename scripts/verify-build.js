@@ -280,6 +280,16 @@ test('missed incoming calls release the single-call lock and accepted-call failu
   assert.match(html, /showDmCallFailureStage\(acceptedCall, "Не удалось подготовить аудиосоединение/);
 });
 
+test('incoming calls are revalidated before microphone capture and cancelled rings release state', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /const verificationResponse = await fetchWithTimeout/);
+  assert.match(html, /const incomingStillValid = isValidIncomingDmCall/);
+  assert.match(html, /liveCallRecord\.caller/);
+  assert.match(html, /missedIncomingWasStillRinging/);
+  assert.match(html, /activeDmCall = null/);
+  assert.match(html, /Вызов отменён собеседником/);
+});
+
 test('SDP answers are retried after failed Firebase writes', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /pc\.__pendingSdpAnswer/);
