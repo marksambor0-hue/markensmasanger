@@ -4844,7 +4844,10 @@
       if (!txt && !mediaUrl) return;
       if (textOverride === undefined) chatInput.value = "";
 
-      const msgId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2, 5);
+      const randomMessageId = (window.crypto && typeof window.crypto.randomUUID === "function")
+        ? window.crypto.randomUUID().replace(/-/g, "")
+        : (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+      const msgId = "m_" + Date.now() + "_" + randomMessageId.slice(0, 24);
       const inVortexServerChat = !isDmChat && isCurrentUserInVortex();
       if (inVortexServerChat) {
         addVortexXp(15);
