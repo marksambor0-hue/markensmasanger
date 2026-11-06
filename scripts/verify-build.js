@@ -314,6 +314,16 @@ test('chat delivery retries preserve messages and do not drop rapid sends', () =
   assert.match(html, /pendingLocal/);
 });
 
+test('each DM call gets a unique per-attempt record ID instead of reusing the pair ID', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function startDmCall');
+  const end = html.indexOf('async function acceptIncomingCall', start);
+  const caller = html.slice(start, end);
+  assert.match(caller, /const callPairKey = \[currentUser\.name\.toLowerCase\(\), friendName\.toLowerCase\(\)\]\.sort\(\)\.join\("_"\)/);
+  assert.match(caller, /window\.crypto && typeof window\.crypto\.randomUUID === "function"/);
+  assert.match(caller, /const callId = callPairKey \+ "_" \+ Date\.now\(\) \+ "_" \+ callNonce\.slice\(0, 20\)/);
+});
+
 test('calls require a live microphone and recover serialized WebRTC signaling', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /track\.readyState === "live"/);
