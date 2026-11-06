@@ -299,6 +299,26 @@ test('SDP answers are retried after failed Firebase writes', () => {
   assert.match(html, /pc\.__lastSdpPublishTs = Date\.now\(\)/);
 });
 
+test('ICE candidate delivery retries idempotently and never silently drops a candidate', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /function queueLocalIceCandidate\(pc, pairKey, peerName, candidate\)/);
+  assert.match(html, /function flushLocalIceCandidateQueue\(pc, pairKey, peerName\)/);
+  assert.match(html, /__pendingIceCandidates\.delete\(candidateId\)/);
+  assert.match(html, /method: "PUT"/);
+  const onIceMatch = html.match(/pc\.onicecandidate = \(event\) => \{[\s\S]*?\n      \};/);
+  assert.ok(onIceMatch, 'ICE candidate event handler must exist');
+  assert.match(onIceMatch[0], /queueLocalIceCandidate\(pc, pairKey, peerName/);
+  assert.doesNotMatch(onIceMatch[0], /method: "POST"/);
+  assert.match(html, /__icePublishRetryTimer/);
+});
+
+test('outgoing calls are not invited when local SDP offer creation fails', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /Could not create the initial WebRTC offer/);
+  assert.match(html, /closePeerConnectionForUser\(peerName\);\s*return null;/);
+  assert.match(html, /Initial WebRTC offer is queued for retry/);
+});
+
 test('outgoing invites and call state updates are not silently ignored', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /invitePublished/);
