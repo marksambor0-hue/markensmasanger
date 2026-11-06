@@ -4693,10 +4693,13 @@
 
         let replyHtml = "";
         if (m.replyTo && typeof m.replyTo.sender === "string") {
+          const replyText = (isDmChat && m.replyTo.e2ee)
+            ? decryptDmPayload(String(m.replyTo.text || ""), activeChannel)
+            : String(m.replyTo.text || "Вложение");
           replyHtml = `
             <div class="ds-reply-quote">
               <span class="ds-reply-author">@${escapeHtml(m.replyTo.sender.slice(0, 64))}</span>
-              <span>${escapeHtml(String(m.replyTo.text || "Вложение").slice(0, 70))}</span>
+              <span>${escapeHtml(replyText.slice(0, 70))}</span>
             </div>
           `;
         }
@@ -4793,9 +4796,18 @@
       const cloudPayload = { ...msgObj };
       delete cloudPayload.deliveryState;
       delete cloudPayload._localDm;
-      if (isDm && cloudPayload.text) {
-        cloudPayload.text = encryptDmPayload(cloudPayload.text, channelKey);
-        cloudPayload.e2ee = true;
+      if (isDm) {
+        if (cloudPayload.replyTo && typeof cloudPayload.replyTo === "object") {
+          cloudPayload.replyTo = { ...cloudPayload.replyTo };
+          if (typeof cloudPayload.replyTo.text === "string" && cloudPayload.replyTo.text) {
+            cloudPayload.replyTo.text = encryptDmPayload(cloudPayload.replyTo.text, channelKey);
+            cloudPayload.replyTo.e2ee = true;
+          }
+        }
+        if (cloudPayload.text) {
+          cloudPayload.text = encryptDmPayload(cloudPayload.text, channelKey);
+          cloudPayload.e2ee = true;
+        }
       }
       const url = DB_URL + "/channels_v22/" + encodeURIComponent(channelKey) + "/" + encodeURIComponent(msgObj.id) + ".json";
       for (let attempt = 1; attempt <= 3; attempt++) {
@@ -4837,10 +4849,11 @@
         __pendingChatRetryLocks.delete(key);
       }
     }
-    async function sendChatMessage(textOverride, mediaUrl = null, mediaType = null) {
-      const channelKey = activeChannel;
-      const messageIsDm = isDmChat;
-      const txt = textOverride !== undefined ? textOverride : chatInput.value.trim();
+    async function sendChatMessage(textOverride, mediaUrl = null, mediaType = null, deliveryContext = null) {
+      const channelKey = deliveryContext && typeof deliveryContext.channelKey === "string" ? deliveryContext.channelKey : activeChannel;
+      const messageIsDm = deliveryContext && typeof deliveryContext.isDm === "boolean" ? deliveryContext.isDm : isDmChat;
+      const rawText = textOverride !== undefined ? textOverride : chatInput.value.trim();
+      const txt = typeof rawText === "string" ? rawText.slice(0, 4000) : String(rawText || "").slice(0, 4000);
       if (!txt && !mediaUrl) return;
       if (textOverride === undefined) chatInput.value = "";
 
@@ -4848,7 +4861,7 @@
         ? window.crypto.randomUUID().replace(/-/g, "")
         : (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
       const msgId = "m_" + Date.now() + "_" + randomMessageId.slice(0, 24);
-      const inVortexServerChat = !isDmChat && isCurrentUserInVortex();
+      const inVortexServerChat = !messageIsDm && isCurrentUserInVortex();
       if (inVortexServerChat) {
         addVortexXp(15);
       }
@@ -4863,7 +4876,11 @@
         text: txt,
         mediaUrl,
         mediaType,
-        replyTo: window.activeReplyTarget ? { id: window.activeReplyTarget.id, sender: window.activeReplyTarget.sender, text: window.activeReplyTarget.text } : null,
+        replyTo: (window.activeReplyTarget && window.__activeReplyChannel === channelKey) ? {
+          id: window.activeReplyTarget.id,
+          sender: window.activeReplyTarget.sender,
+          text: getPlainChatMessageText(window.activeReplyTarget, channelKey, messageIsDm)
+        } : null,
         time: new Date().toTimeString().slice(0, 5),
         ts: Date.now(),
         deliveryState: "sending",
@@ -8775,14 +8792,22 @@ goto loop`;
       return s;
     }
 
+    function getPlainChatMessageText(message, channelKey = activeChannel, directMessage = isDmChat) {
+      if (!message || typeof message.text !== "string") return "";
+      if (directMessage && message.e2ee) return decryptDmPayload(message.text, channelKey);
+      return message.text;
+    }
+
     function startReplyToMessage(msg) {
       if (!msg || typeof msg !== "object") return;
       window.activeReplyTarget = msg;
+      window.__activeReplyChannel = activeChannel;
       const banner = document.getElementById("replyComposeBanner");
       const txt = document.getElementById("replyBannerText");
       if (banner && txt) {
         const sender = typeof msg.sender === "string" ? msg.sender.slice(0, 64) : "Участник";
-        const preview = typeof msg.text === "string" ? msg.text.slice(0, 45) : "Вложение";
+        const previewText = getPlainChatMessageText(msg, activeChannel, isDmChat);
+        const preview = previewText.slice(0, 45) || "Вложение";
         txt.innerHTML = `Ответ пользователю <b>@${escapeHtml(sender)}</b>: ${escapeHtml(preview)}`;
         banner.style.display = "flex";
       }
@@ -8791,6 +8816,7 @@ goto loop`;
 
     function cancelReplyMode() {
       window.activeReplyTarget = null;
+      window.__activeReplyChannel = null;
       const banner = document.getElementById("replyComposeBanner");
       if (banner) banner.style.display = "none";
     }
