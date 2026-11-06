@@ -5411,6 +5411,108 @@
       return [currentUser.name.toLowerCase(), String(peerName || "").toLowerCase()].sort().join("__");
     }
 
+    let __dmCallConnectTimer = null;
+
+    function isDmCallMediaReady(pc) {
+      const track = pc && pc.__markensRemoteAudioTrack;
+      return !!(
+        pc &&
+        pc.connectionState === "connected" &&
+        track &&
+        track.kind === "audio" &&
+        track.readyState === "live" &&
+        track.muted === false &&
+        pc.__markensAudioPlaybackReady === true
+      );
+    }
+
+    function clearDmCallConnectWatchdog() {
+      if (__dmCallConnectTimer) {
+        clearTimeout(__dmCallConnectTimer);
+        __dmCallConnectTimer = null;
+      }
+    }
+
+    function setDmCallStatusText(message) {
+      const label = document.getElementById("dmCallStatusLabel");
+      if (label) label.textContent = message;
+    }
+
+    async function patchDmCallRecord(callId, patch) {
+      if (!callId || !patch || typeof patch !== "object") return false;
+      const url = `${DB_URL}/dm_calls_v25/${encodeURIComponent(callId)}.json`;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await fetchWithTimeout(url, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(patch)
+          }, 5000);
+          if (response && response.ok) return true;
+        } catch (_error) {}
+        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 300));
+      }
+      return false;
+    }
+
+    function armDmCallConnectWatchdog(call, timeoutMs, failureMessage) {
+      clearDmCallConnectWatchdog();
+      if (!call || !call.callId) return;
+      const callId = call.callId;
+      __dmCallConnectTimer = setTimeout(async () => {
+        __dmCallConnectTimer = null;
+        if (!activeDmCall || activeDmCall.callId !== callId || activeDmCall.state === "connected") return;
+        activeDmCall.state = "failed";
+        stopRingtone();
+        setDmCallStatusText(failureMessage || "Не удалось установить соединение. Проверьте интернет и попробуйте ещё раз.");
+        await patchDmCallRecord(callId, {
+          state: "failed",
+          failedBy: currentUser.name,
+          failureReason: failureMessage || "connection-timeout",
+          ts: Date.now()
+        });
+        if (activeDmCall && activeDmCall.callId === callId) closePeerConnectionForUser(activeDmCall.peer);
+      }, timeoutMs);
+    }
+
+    function maybeMarkDmCallConnected(peerName, pc) {
+      if (!activeDmCall || !activeDmCall.peer || !pc ||
+          activeDmCall.peer.toLowerCase() !== String(peerName || "").toLowerCase()) return false;
+      if (!isDmCallMediaReady(pc)) return false;
+
+      const call = activeDmCall;
+      call.state = "connected";
+      clearDmCallConnectWatchdog();
+      stopRingtone();
+      setDmCallStatusText(`Связь установлена (${call.type === "video" ? "Видео" : "Голос"})`);
+      if (!call.__connectedSoundPlayed) {
+        call.__connectedSoundPlayed = true;
+        playSound("join");
+      }
+      if (!call.__connectedRecordSent && !call.__connectedRecordWriteInFlight) {
+        call.__connectedRecordWriteInFlight = true;
+        patchDmCallRecord(call.callId, {
+          state: "connected",
+          connectedBy: currentUser.name,
+          connectedTs: Date.now()
+        }).then(ok => {
+          if (activeDmCall && activeDmCall.callId === call.callId) {
+            call.__connectedRecordWriteInFlight = false;
+            call.__connectedRecordSent = ok;
+          }
+        });
+      }
+      return true;
+    }
+
+    function markDmCallConnecting(peerName, message) {
+      if (!activeDmCall || !activeDmCall.peer ||
+          activeDmCall.peer.toLowerCase() !== String(peerName || "").toLowerCase() ||
+          activeDmCall.state === "failed") return;
+      activeDmCall.state = "connecting";
+      if (message) setDmCallStatusText(message);
+    }
+
     function isValidIncomingDmCall(call, callId, currentUserName, now = Date.now()) {
       if (!call || typeof call !== "object" || typeof callId !== "string") return false;
       if (typeof call.caller !== "string" || typeof call.callee !== "string") return false;
@@ -5522,6 +5624,14 @@
         });
       }
 
+      const hasLiveAudioSender = pc.getSenders().some(sender =>
+        sender && sender.track && sender.track.kind === "audio" && sender.track.readyState === "live"
+      );
+      if (!hasLiveAudioSender) {
+        closePeerConnectionForUser(peerName);
+        return null;
+      }
+
       if (localScreenStream && localScreenStream.getVideoTracks().length > 0) {
         try {
           pc.addTrack(localScreenStream.getVideoTracks()[0], localScreenStream);
@@ -5530,7 +5640,38 @@
 
       pc.ontrack = (event) => {
         const remoteStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
-        if (activeDmCall && activeDmCall.peer && activeDmCall.peer.toLowerCase() === peerName.toLowerCase()) {
+        const isCurrentDmPeer = !!(activeDmCall && activeDmCall.peer &&
+          activeDmCall.peer.toLowerCase() === peerName.toLowerCase());
+
+        if (isCurrentDmPeer && event.track.kind === "audio") {
+          pc.__markensRemoteAudioTrack = event.track;
+          pc.__markensAudioPlaybackReady = false;
+          const refreshRemoteAudioState = () => {
+            if (event.track.muted || event.track.readyState !== "live") {
+              pc.__markensAudioPlaybackReady = false;
+              if (activeDmCall && activeDmCall.peer &&
+                  activeDmCall.peer.toLowerCase() === peerName.toLowerCase() &&
+                  activeDmCall.state === "connected") {
+                markDmCallConnecting(peerName, "Восстанавливаем передачу звука…");
+                armDmCallConnectWatchdog(activeDmCall, 18000, "Звук не восстановился. Завершите звонок и попробуйте снова.");
+              }
+              return;
+            }
+            maybeMarkDmCallConnected(peerName, pc);
+          };
+          event.track.addEventListener("unmute", refreshRemoteAudioState);
+          event.track.addEventListener("mute", refreshRemoteAudioState);
+          event.track.addEventListener("ended", () => {
+            pc.__markensAudioPlaybackReady = false;
+            if (activeDmCall && activeDmCall.peer &&
+                activeDmCall.peer.toLowerCase() === peerName.toLowerCase()) {
+              markDmCallConnecting(peerName, "Удалённый микрофон отключился. Ожидаем звук…");
+            }
+          });
+          refreshRemoteAudioState();
+        }
+
+        if (isCurrentDmPeer) {
           if (event.track.kind === "video") {
             const vRem = document.getElementById("callVidRemote");
             const avRem = document.getElementById("callAvRemote");
@@ -5545,7 +5686,20 @@
               audRem.srcObject = remoteStream;
               audRem.muted = isDeafened;
               applyOutputDeviceToAudioElement(audRem);
-              audRem.play().catch(() => {});
+              const playResult = audRem.play();
+              if (playResult && typeof playResult.then === "function") {
+                playResult.then(() => {
+                  pc.__markensAudioPlaybackReady = !audRem.paused && !audRem.ended;
+                  maybeMarkDmCallConnected(peerName, pc);
+                }).catch(error => {
+                  pc.__markensAudioPlaybackReady = false;
+                  setDmCallStatusText("Соединение есть, но звук не воспроизводится. Проверьте устройство вывода Windows.");
+                  console.warn("Remote call audio playback failed:", error);
+                });
+              } else {
+                pc.__markensAudioPlaybackReady = !audRem.paused && !audRem.ended;
+                maybeMarkDmCallConnected(peerName, pc);
+              }
             }
           }
         } else {
@@ -5590,11 +5744,32 @@
       pc.__iceRestartInProgress = false;
       pc.__iceRestartTimer = null;
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "connected" || pc.connectionState === "closed") {
+        if (pc.connectionState === "connected") {
+          if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+          pc.__iceRestartTimer = null;
+          pc.__iceRestartInProgress = false;
+          if (!maybeMarkDmCallConnected(peerName, pc)) {
+            markDmCallConnecting(peerName, "Соединение установлено. Ожидаем подтверждения звука…");
+          }
+          return;
+        }
+        if (pc.connectionState === "closed") {
           if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
           pc.__iceRestartTimer = null;
           pc.__iceRestartInProgress = false;
           return;
+        }
+        if (pc.connectionState === "connecting" || pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+          const status = pc.connectionState === "disconnected"
+            ? "Связь прервалась. Пытаемся восстановить…"
+            : (pc.connectionState === "failed" ? "Сеть не установлена. Пытаемся восстановить звонок…" : "Устанавливаем соединение…");
+          markDmCallConnecting(peerName, status);
+          if (activeDmCall && activeDmCall.peer &&
+              activeDmCall.peer.toLowerCase() === peerName.toLowerCase() &&
+              !__dmCallConnectTimer) {
+            armDmCallConnectWatchdog(activeDmCall, pc.connectionState === "disconnected" ? 18000 : 25000,
+              "Не удалось восстановить звонок. Проверьте сеть и попробуйте ещё раз.");
+          }
         }
         if (pc.connectionState !== "failed" && pc.connectionState !== "disconnected") return;
         if (!isInitiator || pc.__iceRestartInProgress || pc.signalingState !== "stable") return;
@@ -5621,6 +5796,7 @@
               })
             }, 4500);
             if (!response || !response.ok) throw new Error("ICE restart offer could not be delivered");
+            pc.__lastSdpPublishTs = Date.now();
           } catch (error) {
             if (pc.signalingState === "have-local-offer") {
               try { await pc.setLocalDescription({ type: "rollback" }); } catch (_rollbackError) {}
@@ -5664,11 +5840,29 @@
       const pairKey = getWebRtcPairKey(peerName);
       try {
         const res = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}.json`, {}, 4500);
-        if (!res.ok) return;
+        if (!res || !res.ok) return;
         const sigData = await res.json();
         if (!sigData || typeof sigData !== "object") return;
 
         let pc = activePeerConnections[peerName];
+
+        // A failed Firebase write must not silently discard the callee's SDP answer.
+        if (pc && pc.__pendingSdpAnswer &&
+            Date.now() - (pc.__lastSdpAnswerPublishTs || 0) > 1800) {
+          pc.__lastSdpAnswerPublishTs = Date.now();
+          try {
+            const answerRetryResponse = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(pc.__pendingSdpAnswer)
+            }, 4500);
+            if (answerRetryResponse && answerRetryResponse.ok) {
+              pc.__pendingSdpAnswer = null;
+              pc.__lastSdpAnswerPublishTs = Date.now();
+            }
+          } catch (_answerRetryError) {}
+        }
+
         // If the initial offer write failed or its answer was lost, republish the same offer with a fresh timestamp.
         if (pc && pc.__isMarkensInitiator && pc.signalingState === "have-local-offer" && pc.localDescription?.type === "offer" &&
             Date.now() - (pc.__lastSdpPublishTs || 0) > 2800) {
@@ -5690,23 +5884,33 @@
         if (sigData.sdp && isValidPeerSdpMessage(sigData.sdp, peerName, currentUser.name)) {
           if (sigData.sdp.type === "offer") {
             if (!pc) pc = await ensureWebRtcPeerConnection(peerName, false, needVideo);
-            if (pc && pc.signalingState === "stable" && (!pc.__lastOfferTs || sigData.sdp.ts > pc.__lastOfferTs)) {
-              pc.__lastOfferTs = sigData.sdp.ts;
-              await pc.setRemoteDescription({ type: "offer", sdp: sigData.sdp.sdp });
+            const isNewOffer = !pc.__lastOfferTs || sigData.sdp.ts > pc.__lastOfferTs;
+            const canFinishPendingOffer = pc.signalingState === "have-remote-offer" && sigData.sdp.ts === pc.__lastOfferTs;
+            if (pc && (isNewOffer || canFinishPendingOffer) &&
+                (pc.signalingState === "stable" || pc.signalingState === "have-remote-offer")) {
+              if (pc.signalingState === "stable") {
+                await pc.setRemoteDescription({ type: "offer", sdp: sigData.sdp.sdp });
+                pc.__lastOfferTs = sigData.sdp.ts;
+              }
               const ans = await pc.createAnswer();
               ans.sdp = enhanceSdpForOpusHd(ans.sdp);
               await pc.setLocalDescription(ans);
-              await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+              pc.__pendingSdpAnswer = {
+                from: currentUser.name,
+                to: peerName,
+                type: "answer",
+                sdp: pc.localDescription.sdp,
+                ts: Date.now()
+              };
+              pc.__lastSdpAnswerPublishTs = Date.now();
+              const answerResponse = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  from: currentUser.name,
-                  to: peerName,
-                  type: "answer",
-                  sdp: pc.localDescription.sdp,
-                  ts: Date.now()
-                })
+                body: JSON.stringify(pc.__pendingSdpAnswer)
               }, 4500);
+              if (!answerResponse || !answerResponse.ok) throw new Error("Initial WebRTC answer could not be delivered");
+              pc.__pendingSdpAnswer = null;
+              pc.__lastSdpAnswerPublishTs = Date.now();
             }
           } else if (sigData.sdp.type === "answer" && pc && pc.signalingState === "have-local-offer") {
             await pc.setRemoteDescription({ type: "answer", sdp: sigData.sdp.sdp });
@@ -5752,28 +5956,26 @@
         type,
         isCaller: true,
         state: "calling",
-        callId
+        callId,
+        __recordPublished: false
       };
 
       startRingtone("outgoing");
       const stage = document.getElementById("dmCallStage");
       if (stage) stage.style.display = "flex";
-      document.getElementById("dmCallStatusLabel").textContent = `Вызов @${friendName}...`;
+      setDmCallStatusText(`Вызов @${friendName}...`);
       document.getElementById("callNameRemote").textContent = friendName;
       document.getElementById("callAvRemote").textContent = friendName.charAt(0).toUpperCase();
       document.getElementById("callNameLocal").textContent = currentUser.name + " (Вы)";
       document.getElementById("callAvLocal").textContent = currentUser.name.charAt(0).toUpperCase();
 
-      // Show video tiles if video call
       const vLoc = document.getElementById("callVidLocal");
-      const vRem = document.getElementById("callVidRemote");
       const avLoc = document.getElementById("callAvLocal");
-      const avRem = document.getElementById("callAvRemote");
       const callStream = await acquireLocalMediaStream(type === "video");
       if (!callStream || !callStream.getAudioTracks().some(track => track.readyState === "live")) {
         stopRingtone();
         activeDmCall.state = "failed";
-        document.getElementById("dmCallStatusLabel").textContent = "Нет доступа к микрофону. Проверьте разрешения Windows и попробуйте снова.";
+        setDmCallStatusText("Нет доступа к микрофону. Проверьте разрешения Windows и попробуйте снова.");
         return;
       }
       if (type === "video" && vLoc) {
@@ -5789,69 +5991,96 @@
       if (!peerConnection) {
         stopRingtone();
         activeDmCall.state = "failed";
-        document.getElementById("dmCallStatusLabel").textContent = "Не удалось подготовить голосовое соединение. Проверьте микрофон и повторите звонок.";
+        setDmCallStatusText("Не удалось подготовить голосовое соединение. Проверьте микрофон и повторите звонок.");
         return;
       }
-      // Publish the incoming-call record only after the caller has prepared its WebRTC offer.
-      try {
-        await fetchWithTimeout(`${DB_URL}/dm_calls_v25/${callId}.json`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            caller: currentUser.name,
-            callee: friendName,
-            type,
-            state: "calling",
-            ts: Date.now()
-          })
-        });
-      } catch (e) {}
+
+      const invitePayload = {
+        caller: currentUser.name,
+        callee: friendName,
+        type,
+        state: "calling",
+        ts: Date.now()
+      };
+      let invitePublished = false;
+      for (let attempt = 1; attempt <= 3 && !invitePublished; attempt++) {
+        try {
+          const response = await fetchWithTimeout(`${DB_URL}/dm_calls_v25/${encodeURIComponent(callId)}.json`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(invitePayload)
+          }, 5000);
+          invitePublished = !!(response && response.ok);
+        } catch (_error) {}
+        if (!invitePublished && attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 350));
+      }
+
+      if (!invitePublished) {
+        activeDmCall.state = "failed";
+        stopRingtone();
+        setDmCallStatusText("Не удалось отправить приглашение через сервер. Проверьте интернет и попробуйте снова.");
+        closePeerConnectionForUser(friendName);
+        return;
+      }
+
+      activeDmCall.__recordPublished = true;
+      armDmCallConnectWatchdog(activeDmCall, 35000, "Собеседник не ответил. Звонок завершён.");
     }
 
     async function acceptIncomingCall() {
       stopRingtone();
-      document.getElementById("incomingCallModal").style.display = "none";
-      if (!activeDmCall) return;
+      const incModal = document.getElementById("incomingCallModal");
+      if (incModal) incModal.style.display = "none";
+      if (!activeDmCall || !activeDmCall.callId || activeDmCall.isCaller) return;
       const acceptedCall = activeDmCall;
+
       const acceptedStream = await acquireLocalMediaStream(acceptedCall.type === "video");
       if (!acceptedStream || !acceptedStream.getAudioTracks().some(track => track.readyState === "live")) {
         acceptedCall.state = "failed";
-        document.getElementById("dmCallStatusLabel").textContent = "Не удалось получить доступ к микрофону. Звонок не подключён.";
-        try {
-          await fetchWithTimeout(`${DB_URL}/dm_calls_v25/${encodeURIComponent(acceptedCall.callId)}.json`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ state: "failed", failedBy: currentUser.name, ts: Date.now() })
-          }, 4500);
-        } catch (_e) {}
+        clearDmCallConnectWatchdog();
+        setDmCallStatusText("Не удалось получить доступ к микрофону. Звонок не подключён.");
+        await patchDmCallRecord(acceptedCall.callId, { state: "failed", failedBy: currentUser.name, ts: Date.now() });
         return;
       }
-      acceptedCall.state = "connected";
 
-      // Open DM chat with caller
-      openDmWithFriend(activeDmCall.peer);
+      const acceptedPc = await ensureWebRtcPeerConnection(acceptedCall.peer, false, acceptedCall.type === "video");
+      if (!acceptedPc) {
+        acceptedCall.state = "failed";
+        clearDmCallConnectWatchdog();
+        setDmCallStatusText("Не удалось подготовить аудиосоединение. Проверьте микрофон и повторите попытку.");
+        await patchDmCallRecord(acceptedCall.callId, { state: "failed", failedBy: currentUser.name, ts: Date.now() });
+        return;
+      }
+
+      acceptedCall.state = "connecting";
+      setDmCallStatusText("Принято. Подключаемся к собеседнику…");
+      armDmCallConnectWatchdog(acceptedCall, 25000, "Не удалось подключиться к собеседнику. Проверьте интернет и попробуйте снова.");
+
+      openDmWithFriend(acceptedCall.peer);
       const stage = document.getElementById("dmCallStage");
       if (stage) stage.style.display = "flex";
-      document.getElementById("dmCallStatusLabel").textContent = `Связь установлена (${activeDmCall.type === 'video' ? 'Видео' : 'Голос'})`;
-      document.getElementById("callNameRemote").textContent = activeDmCall.peer;
-      document.getElementById("callAvRemote").textContent = activeDmCall.peer.charAt(0).toUpperCase();
+      document.getElementById("callNameRemote").textContent = acceptedCall.peer;
+      document.getElementById("callAvRemote").textContent = acceptedCall.peer.charAt(0).toUpperCase();
       document.getElementById("callNameLocal").textContent = currentUser.name + " (Вы)";
       document.getElementById("callAvLocal").textContent = currentUser.name.charAt(0).toUpperCase();
 
-      playSound("join");
-      await pollWebRtcSignalingForPeer(activeDmCall.peer, activeDmCall.type === "video");
+      const accepted = await patchDmCallRecord(acceptedCall.callId, {
+        state: "accepted",
+        answeredBy: currentUser.name,
+        acceptedTs: Date.now()
+      });
+      if (!accepted) {
+        acceptedCall.state = "failed";
+        clearDmCallConnectWatchdog();
+        setDmCallStatusText("Сервер не подтвердил принятие звонка. Проверьте соединение.");
+        return;
+      }
 
-      // Update call in Firebase
-      try {
-        await fetch(`${DB_URL}/dm_calls_v25/${activeDmCall.callId}.json`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ state: "connected", answeredBy: currentUser.name })
-        });
-      } catch (e) {}
+      await pollWebRtcSignalingForPeer(acceptedCall.peer, acceptedCall.type === "video");
     }
 
     function declineIncomingCall() {
+      clearDmCallConnectWatchdog();
       stopRingtone();
       document.getElementById("incomingCallModal").style.display = "none";
       if (activeDmCall) {
@@ -5861,6 +6090,7 @@
     }
 
     async function endDmCall() {
+      clearDmCallConnectWatchdog();
       stopRingtone();
       playSound("leave");
       const stage = document.getElementById("dmCallStage");
@@ -5932,51 +6162,92 @@
     // Check for incoming DM calls in Realtime
     let __isCheckingCalls = false;
     async function checkIncomingDmCalls() {
-      if (document.visibilityState !== "visible") return;
-      if (__isCheckingCalls) return;
+      if (document.visibilityState !== "visible" || __isCheckingCalls) return;
       __isCheckingCalls = true;
       try {
         const res = await fetchWithTimeout(`${DB_URL}/dm_calls_v25.json`, { cache: "no-store" }, 7000);
         if (!res || !res.ok) return;
         const data = await res.json();
-        if (!data || typeof data !== "object") return;
+        if (!data || typeof data !== "object" || Array.isArray(data)) return;
         const now = Date.now();
-        for (const [cId, call] of Object.entries(data)) {
-          if (!call || typeof call !== "object") continue;
-          if (isValidIncomingDmCall(call, cId, currentUser.name, now)) {
-            if (!activeDmCall || activeDmCall.callId !== cId) {
-              activeDmCall = { peer: call.caller, type: call.type, isCaller: false, state: "calling", callId: cId };
-              const incModal = document.getElementById("incomingCallModal");
-              document.getElementById("incCallName").textContent = call.caller;
-              document.getElementById("incCallAv").textContent = call.caller.charAt(0).toUpperCase();
-              document.getElementById("incCallType").textContent = `Входящий ${call.type === 'video' ? 'видеозвонок' : 'голосовой звонок'}`;
-              incModal.style.display = "flex";
-              startRingtone("incoming");
+
+        if (activeDmCall) {
+          const currentRecord = data[activeDmCall.callId];
+          if (currentRecord && typeof currentRecord === "object") {
+            activeDmCall.__missingRecordPolls = 0;
+
+            if (["failed", "busy", "ended"].includes(currentRecord.state)) {
+              activeDmCall.state = "failed";
+              clearDmCallConnectWatchdog();
+              stopRingtone();
+              const message = currentRecord.state === "busy"
+                ? "Собеседник уже разговаривает."
+                : (currentRecord.state === "ended" ? "Собеседник завершил звонок." : "Не удалось подключить собеседника.");
+              setDmCallStatusText(message);
+              closePeerConnectionForUser(activeDmCall.peer);
               return;
             }
-            if (activeDmCall.state !== "connected") return;
-          }
-          if (activeDmCall && activeDmCall.callId === cId && call.state !== "failed") {
-            if (activeDmCall.isCaller || activeDmCall.state === "connected") {
+
+            if (activeDmCall.isCaller && currentRecord.state === "accepted" && activeDmCall.state === "calling") {
+              activeDmCall.state = "connecting";
+              stopRingtone();
+              setDmCallStatusText("Собеседник принял вызов. Устанавливаем соединение…");
+              armDmCallConnectWatchdog(activeDmCall, 25000, "Не удалось установить соединение. Проверьте интернет и попробуйте ещё раз.");
+            }
+
+            if (currentRecord.state === "connected" && activeDmCall.state !== "connected") {
+              setDmCallStatusText("Собеседник подключился. Проверяем передачу звука…");
+            }
+
+            if (activeDmCall.isCaller || ["accepted", "connected"].includes(currentRecord.state) ||
+                ["connecting", "connected"].includes(activeDmCall.state)) {
               await pollWebRtcSignalingForPeer(activeDmCall.peer, activeDmCall.type === "video");
             }
-          }
-          if (activeDmCall && activeDmCall.callId === cId && activeDmCall.isCaller && call.state === "failed") {
-            activeDmCall.state = "failed";
-            stopRingtone();
-            document.getElementById("dmCallStatusLabel").textContent = "Собеседник не смог подключить микрофон.";
-          }
-          // If caller sees call answered
-          if (activeDmCall && activeDmCall.callId === cId && activeDmCall.isCaller && call.state === "connected") {
-            if (activeDmCall.state !== "connected") {
-              activeDmCall.state = "connected";
+          } else if (activeDmCall.__recordPublished) {
+            activeDmCall.__missingRecordPolls = (activeDmCall.__missingRecordPolls || 0) + 1;
+            if (activeDmCall.__missingRecordPolls >= 3) {
+              activeDmCall.state = "failed";
+              clearDmCallConnectWatchdog();
               stopRingtone();
-              playSound("join");
-              document.getElementById("dmCallStatusLabel").textContent = `Связь установлена (${call.type === 'video' ? 'Видео' : 'Голос'})`;
+              setDmCallStatusText("Звонок завершён другой стороной.");
+              closePeerConnectionForUser(activeDmCall.peer);
+              return;
             }
           }
         }
-      } catch (e) {} finally { __isCheckingCalls = false; }
+
+        if (!activeDmCall) {
+          for (const [cId, call] of Object.entries(data)) {
+            if (!isValidIncomingDmCall(call, cId, currentUser.name, now)) continue;
+            activeDmCall = {
+              peer: call.caller,
+              type: call.type,
+              isCaller: false,
+              state: "calling",
+              callId: cId,
+              __recordPublished: true,
+              __missingRecordPolls: 0
+            };
+            const incModal = document.getElementById("incomingCallModal");
+            document.getElementById("incCallName").textContent = call.caller;
+            document.getElementById("incCallAv").textContent = call.caller.charAt(0).toUpperCase();
+            document.getElementById("incCallType").textContent = `Входящий ${call.type === "video" ? "видеозвонок" : "голосовой звонок"}`;
+            if (incModal) incModal.style.display = "flex";
+            startRingtone("incoming");
+            armDmCallConnectWatchdog(activeDmCall, 30000, "Время ожидания входящего звонка истекло.");
+            break;
+          }
+        } else {
+          for (const [otherId, otherCall] of Object.entries(data)) {
+            if (otherId === activeDmCall.callId || !isValidIncomingDmCall(otherCall, otherId, currentUser.name, now)) continue;
+            await patchDmCallRecord(otherId, { state: "busy", busyBy: currentUser.name, ts: Date.now() });
+          }
+        }
+      } catch (e) {
+        console.warn("Incoming call check failed:", e);
+      } finally {
+        __isCheckingCalls = false;
+      }
     }
 
     // SERVER VOICE ROOMS (Лобби, Катка, Стрим-рум, Кинозал)
