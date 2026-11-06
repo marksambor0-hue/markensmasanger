@@ -5484,6 +5484,39 @@
       return null;
     }
 
+    async function stopLocalMediaCapture() {
+      const trackSet = new Set();
+      for (const stream of [localMediaStream, localRawMicStream]) {
+        if (!stream || typeof stream.getTracks !== "function") continue;
+        stream.getTracks().forEach(track => trackSet.add(track));
+      }
+      trackSet.forEach(track => {
+        try { if (track.readyState !== "ended") track.stop(); } catch (_error) {}
+      });
+
+      localMediaStream = null;
+      localRawMicStream = null;
+      const audioContext = localStudioAudioCtx;
+      localStudioAudioCtx = null;
+      localHighPassFilter = null;
+      localVoiceCompressor = null;
+      localMicGainNode = null;
+      if (audioContext && audioContext.state !== "closed") {
+        try { await audioContext.close(); } catch (_error) {}
+      }
+    }
+
+    async function releaseLocalMediaIfIdle() {
+      const callState = activeDmCall && activeDmCall.state;
+      const dmCallStillNeedsMic = !!activeDmCall && (
+        (activeDmCall.isCaller && ["calling", "connecting", "connected"].includes(callState)) ||
+        (!activeDmCall.isCaller && ["connecting", "connected"].includes(callState))
+      );
+      if (currentVoiceRoom || dmCallStillNeedsMic) return false;
+      await stopLocalMediaCapture();
+      return true;
+    }
+
     // Real WebRTC P2P Connection & Signaling Helper (for DM Calls & Multi-Peer Voice Rooms)
     function getWebRtcPairKey(peerName) {
       return [currentUser.name.toLowerCase(), String(peerName || "").toLowerCase()].sort().join("__");
@@ -5562,6 +5595,7 @@
         if (timedOutUnacceptedIncoming && activeDmCall && activeDmCall.callId === callId) {
           activeDmCall = null;
         }
+        await releaseLocalMediaIfIdle();
       }, timeoutMs);
     }
 
@@ -6157,6 +6191,7 @@
         stopRingtone();
         activeDmCall.state = "failed";
         setDmCallStatusText("Нет доступа к микрофону. Проверьте разрешения Windows и попробуйте снова.");
+        await releaseLocalMediaIfIdle();
         return;
       }
       if (type === "video" && vLoc) {
@@ -6173,6 +6208,7 @@
         stopRingtone();
         activeDmCall.state = "failed";
         setDmCallStatusText("Не удалось подготовить голосовое соединение. Проверьте микрофон и повторите звонок.");
+        await releaseLocalMediaIfIdle();
         return;
       }
 
@@ -6201,6 +6237,7 @@
         stopRingtone();
         setDmCallStatusText("Не удалось отправить приглашение через сервер. Проверьте интернет и попробуйте снова.");
         closePeerConnectionForUser(friendName);
+        await releaseLocalMediaIfIdle();
         return;
       }
 
@@ -6246,6 +6283,7 @@
         clearDmCallConnectWatchdog();
         showDmCallFailureStage(acceptedCall, "Не удалось получить доступ к микрофону. Звонок не подключён. Проверьте разрешения Windows.");
         await patchDmCallRecord(acceptedCall.callId, { state: "failed", failedBy: currentUser.name, ts: Date.now() });
+        await releaseLocalMediaIfIdle();
         return;
       }
 
@@ -6255,6 +6293,7 @@
         clearDmCallConnectWatchdog();
         showDmCallFailureStage(acceptedCall, "Не удалось подготовить аудиосоединение. Проверьте микрофон и повторите попытку.");
         await patchDmCallRecord(acceptedCall.callId, { state: "failed", failedBy: currentUser.name, ts: Date.now() });
+        await releaseLocalMediaIfIdle();
         return;
       }
 
@@ -6279,20 +6318,23 @@
         acceptedCall.state = "failed";
         clearDmCallConnectWatchdog();
         setDmCallStatusText("Сервер не подтвердил принятие звонка. Проверьте соединение.");
+        await releaseLocalMediaIfIdle();
         return;
       }
 
       await pollWebRtcSignalingForPeer(acceptedCall.peer, acceptedCall.type === "video");
     }
 
-    function declineIncomingCall() {
+    async function declineIncomingCall() {
       clearDmCallConnectWatchdog();
       stopRingtone();
-      document.getElementById("incomingCallModal").style.display = "none";
+      const incomingModal = document.getElementById("incomingCallModal");
+      if (incomingModal) incomingModal.style.display = "none";
       if (activeDmCall) {
-        fetch(`${DB_URL}/dm_calls_v25/${activeDmCall.callId}.json`, { method: "DELETE" }).catch(() => {});
+        fetchWithTimeout(`${DB_URL}/dm_calls_v25/${encodeURIComponent(activeDmCall.callId)}.json`, { method: "DELETE" }, 4000).catch(() => {});
         activeDmCall = null;
       }
+      await releaseLocalMediaIfIdle();
     }
 
     async function endDmCall() {
@@ -6326,6 +6368,7 @@
         } catch (e) {}
         activeDmCall = null;
       }
+      await releaseLocalMediaIfIdle();
     }
 
     document.getElementById("btnStartDmVoiceCall").onclick = () => startDmCall(activeChannelTitle, "voice");
@@ -6400,6 +6443,7 @@
               } else {
                 showDmCallFailureStage(failedCall, message);
               }
+              await releaseLocalMediaIfIdle();
               return;
             }
 
@@ -6437,6 +6481,7 @@
               if (missedIncomingWasStillRinging && activeDmCall && activeDmCall.callId === missingCall.callId) {
                 activeDmCall = null;
               }
+              await releaseLocalMediaIfIdle();
               return;
             }
           }
@@ -6537,8 +6582,9 @@
       });
 
       try {
-        await fetch(`${DB_URL}/voiceRooms_v22/${encodeURIComponent(leavingUser)}.json`, { method: "DELETE" });
+        await fetchWithTimeout(`${DB_URL}/voiceRooms_v22/${encodeURIComponent(leavingUser)}.json`, { method: "DELETE" }, 4000);
       } catch (e) {}
+      await releaseLocalMediaIfIdle();
     };
 
     // PUSH-TO-TALK & MICROPHONE ECHO TEST CONTROLS
