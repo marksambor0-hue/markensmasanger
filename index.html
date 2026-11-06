@@ -4660,10 +4660,13 @@
             : `<img src="${safeMediaUrl}" loading="lazy" style="max-width:100%;max-height:300px;border-radius:8px;margin-top:6px;display:block;object-fit:contain;" />`;
         }
         const rawAudioUrl = typeof m.audioUrl === "string" ? m.audioUrl : "";
-        const audioIsSafe = isSafeMediaUrl(rawAudioUrl) &&
-          (/^https?:\/\//i.test(rawAudioUrl) || /^blob:/i.test(rawAudioUrl) || /^data:audio\//i.test(rawAudioUrl));
+        const playableAudioUrl = (isDmChat && m.audioUrlE2ee)
+          ? decryptDmPayload(rawAudioUrl, activeChannel)
+          : rawAudioUrl;
+        const audioIsSafe = isSafeMediaUrl(playableAudioUrl) &&
+          (/^https?:\/\//i.test(playableAudioUrl) || /^blob:/i.test(playableAudioUrl) || /^data:audio\//i.test(playableAudioUrl));
         if (audioIsSafe) {
-          mediaHtml += `<audio src="${escapeHtml(rawAudioUrl)}" controls style="height:34px;margin-top:6px;display:block;"></audio>`;
+          mediaHtml += `<audio src="${escapeHtml(playableAudioUrl)}" controls preload="metadata" style="height:34px;margin-top:6px;display:block;"></audio>`;
         }
 
         let reactHtml = "";
@@ -4797,6 +4800,10 @@
       delete cloudPayload.deliveryState;
       delete cloudPayload._localDm;
       if (isDm) {
+        if (typeof cloudPayload.audioUrl === "string" && cloudPayload.audioUrl) {
+          cloudPayload.audioUrl = encryptDmPayload(cloudPayload.audioUrl, channelKey);
+          cloudPayload.audioUrlE2ee = true;
+        }
         if (cloudPayload.replyTo && typeof cloudPayload.replyTo === "object") {
           cloudPayload.replyTo = { ...cloudPayload.replyTo };
           if (typeof cloudPayload.replyTo.text === "string" && cloudPayload.replyTo.text) {
@@ -4874,8 +4881,9 @@
         senderRank: inVortexServerChat ? rk.title : null,
         isVortexMsg: inVortexServerChat,
         text: txt,
-        mediaUrl,
-        mediaType,
+        mediaUrl: mediaType === "audio" ? null : mediaUrl,
+        mediaType: mediaType === "audio" ? null : mediaType,
+        audioUrl: mediaType === "audio" ? mediaUrl : null,
         replyTo: (window.activeReplyTarget && window.__activeReplyChannel === channelKey) ? {
           id: window.activeReplyTarget.id,
           sender: window.activeReplyTarget.sender,
@@ -5000,7 +5008,15 @@
 
     async function stageMediaFileForChat(file) {
       if (!file) return;
-      const isVid = (file.type && file.type.startsWith("video/")) || /\.(mp4|webm|mov|mkv|avi)$/i.test(file.name || "");
+      const allowedImage = /^image\/(?:png|jpeg|gif|webp|avif)$/i.test(file.type || "");
+      const allowedVideo = /^video\/(?:mp4|webm|quicktime|x-matroska)$/i.test(file.type || "") ||
+        /\.(mp4|webm|mov|mkv|avi)$/i.test(file.name || "");
+      const maxAttachmentBytes = 4 * 1024 * 1024;
+      if ((!allowedImage && !allowedVideo) || !Number.isFinite(file.size) || file.size <= 0 || file.size > maxAttachmentBytes) {
+        alert("Поддерживаются изображения и видео размером до 4 МБ. Большие файлы пока не отправляются, чтобы не переполнить локальный кэш.");
+        return;
+      }
+      const isVid = allowedVideo;
       const bar = document.getElementById("mediaAttachPreviewBar");
       const thumbBox = document.getElementById("mediaPreviewThumbBox");
       const nameEl = document.getElementById("mediaPreviewName");
@@ -7279,40 +7295,45 @@ goto loop`;
     const btnVoiceNote = document.getElementById("btnVoiceNote");
     btnVoiceNote.onclick = async () => {
       if (voiceRec && voiceRec.state === "recording") {
+        clearTimeout(voiceRec.__maxDurationTimer);
         voiceRec.stop();
         btnVoiceNote.style.color = "var(--text-muted)";
         return;
       }
       try {
+        const recordingChannel = activeChannel;
+        const recordingIsDm = isDmChat;
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         voiceChunks = [];
         voiceRec = new MediaRecorder(stream);
         voiceRec.ondataavailable = (e) => { if (e.data.size > 0) voiceChunks.push(e.data); };
         voiceRec.onstop = () => {
+          clearTimeout(voiceRec.__maxDurationTimer);
           stream.getTracks().forEach(t => t.stop());
-          const blob = new Blob(voiceChunks, { type: "audio/webm" });
+          const blob = new Blob(voiceChunks, { type: voiceRec.mimeType || "audio/webm" });
+          voiceChunks = [];
+          if (!blob.size || blob.size > 2 * 1024 * 1024) {
+            alert("Голосовое сообщение получилось слишком большим (лимит 2 МБ). Запишите его короче.");
+            return;
+          }
           const reader = new FileReader();
           reader.onload = () => {
-            const msgId = "m_" + Date.now();
-            const msgObj = {
-              id: msgId,
-              sender: currentUser.name,
-              text: "Голосовое сообщение",
-              audioUrl: reader.result,
-              time: new Date().toTimeString().slice(0, 5),
-              ts: Date.now()
-            };
-            if (!localChannelStore[activeChannel]) localChannelStore[activeChannel] = [];
-            localChannelStore[activeChannel].push(msgObj);
-            saveLocalStore();
-            renderChatMessages(localChannelStore[activeChannel]);
-            fetch(`${DB_URL}/channels_v22/${encodeURIComponent(activeChannel)}/${msgId}.json`, {
-              method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(msgObj)
-            }).catch(() => {});
+            if (typeof reader.result !== "string") return;
+            sendChatMessage("Голосовое сообщение", reader.result, "audio", {
+              channelKey: recordingChannel,
+              isDm: recordingIsDm
+            });
           };
+          reader.onerror = () => alert("Не удалось подготовить голосовое сообщение.");
           reader.readAsDataURL(blob);
         };
-        voiceRec.start();
+        voiceRec.start(1000);
+        voiceRec.__maxDurationTimer = setTimeout(() => {
+          if (voiceRec && voiceRec.state === "recording") {
+            alert("Достигнут лимит записи 2 минуты. Голосовое сообщение будет отправлено.");
+            voiceRec.stop();
+          }
+        }, 120000);
         btnVoiceNote.style.color = "var(--red)";
       } catch (e) {}
     };
