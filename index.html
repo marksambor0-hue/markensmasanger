@@ -5121,6 +5121,7 @@
       const nextText = String(t).slice(0, 4000);
       message.text = nextText;
       message.e2ee = editIsDm || !!message.e2ee;
+      message._localDm = editIsDm;
       message.edited = true;
       saveLocalStore();
       if (activeChannel === editChannel) renderChatMessages(localChannelStore[editChannel] || []);
@@ -7278,6 +7279,7 @@ goto loop`;
         voiceRec.ondataavailable = (e) => { if (e.data.size > 0) voiceChunks.push(e.data); };
         voiceRec.onstop = () => {
           clearTimeout(voiceRec.__maxDurationTimer);
+          btnVoiceNote.style.color = "var(--text-muted)";
           stream.getTracks().forEach(t => t.stop());
           const blob = new Blob(voiceChunks, { type: voiceRec.mimeType || "audio/webm" });
           voiceChunks = [];
@@ -8464,6 +8466,7 @@ goto loop`;
             const nextText = String(newText).trim().slice(0, 4000);
             myLast.text = nextText;
             myLast.e2ee = editIsDm || !!myLast.e2ee;
+            myLast._localDm = editIsDm;
             myLast.edited = true;
             saveLocalStore();
             if (activeChannel === editChannel) renderChatMessages(localChannelStore[editChannel] || []);
