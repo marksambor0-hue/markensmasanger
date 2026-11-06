@@ -5519,7 +5519,12 @@
 
     // Real WebRTC P2P Connection & Signaling Helper (for DM Calls & Multi-Peer Voice Rooms)
     function getWebRtcPairKey(peerName) {
-      return [currentUser.name.toLowerCase(), String(peerName || "").toLowerCase()].sort().join("__");
+      const existingPc = peerName ? activePeerConnections[peerName] : null;
+      if (existingPc && typeof existingPc.__markensSignalingPairKey === "string") return existingPc.__markensSignalingPairKey;
+      const baseKey = [currentUser.name.toLowerCase(), String(peerName || "").toLowerCase()].sort().join("__");
+      const callId = activeDmCall && activeDmCall.peer && activeDmCall.peer.toLowerCase() === String(peerName || "").toLowerCase()
+        ? String(activeDmCall.callId || "") : "";
+      return callId ? baseKey + "__dm_" + callId : baseKey;
     }
 
     let __dmCallConnectTimer = null;
@@ -5768,6 +5773,13 @@
         return pc.__pendingIceCandidates.size === 0;
       })().finally(() => {
         pc.__icePublishPromise = null;
+        // A candidate can arrive between the empty-queue check and this finally block.
+        if (pc.connectionState !== "closed" && pc.__pendingIceCandidates && pc.__pendingIceCandidates.size > 0 && !pc.__icePublishRetryTimer) {
+          pc.__icePublishRetryTimer = setTimeout(() => {
+            pc.__icePublishRetryTimer = null;
+            flushLocalIceCandidateQueue(pc, pairKey, peerName).catch(error => console.warn("ICE candidate queue follow-up failed:", peerName, error));
+          }, 100);
+        }
       });
 
       return pc.__icePublishPromise;
@@ -5798,12 +5810,16 @@
       }
       if (typeof RTCPeerConnection === "undefined") return null;
 
-      const pc = new RTCPeerConnection({
-        iceServers: RTC_ICE_SERVERS,
-        iceCandidatePoolSize: 4
-      });
+      let pc;
+      try {
+        pc = new RTCPeerConnection({ iceServers: RTC_ICE_SERVERS, iceCandidatePoolSize: 4 });
+      } catch (error) {
+        console.warn("Could not create WebRTC peer connection:", peerName, error);
+        return null;
+      }
       activePeerConnections[peerName] = pc;
       const pairKey = getWebRtcPairKey(peerName);
+      pc.__markensSignalingPairKey = pairKey;
 
       const stream = await acquireLocalMediaStream(needVideo);
       const hasLiveMicrophone = !!(stream && stream.getAudioTracks().some(track => track.readyState === "live"));
