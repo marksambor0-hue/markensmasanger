@@ -264,9 +264,11 @@ test('call acceptance is not treated as a completed call and timeout paths are b
   assert.match(html, /state = "connecting"/);
   assert.match(html, /armDmCallConnectWatchdog/);
   assert.match(html, /currentRecord\.state === "accepted"/);
-  assert.match(html, /activeDmCall\.state = "connected"/);
+  assert.match(html, /function maybeMarkDmCallConnected\(peerName, pc\)/);
+  assert.match(html, /call\.state = "connected"/);
   assert.match(html, /maybeMarkDmCallConnected\(peerName, pc\)/);
-  assert.doesNotMatch(html, /acceptedCall\.state = "connected"/);
+  assert.doesNotMatch(html, /activeDmCall\.state\s*=\s*"connected"/);
+  assert.doesNotMatch(html, /acceptedCall\.state\s*=\s*"connected"/);
 });
 
 test('SDP answers are retried after failed Firebase writes', () => {
