@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
+const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 process.env.MARKENS_TEST_MODE = '1';
@@ -204,6 +205,357 @@ test('updater waits for a downloaded newer version before installing', async () 
   assert.equal(installed.ok, true);
   assert.equal(installed.installedVersion, 'v30.1.18');
   assert.deepEqual(fake.installArgs, [false, true]);
+});
+
+
+test('inline renderer JavaScript parses before a Windows build is accepted', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const blocks = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
+    .filter((match) => !/\bsrc\s*=/.test(match[1]) && match[2].trim());
+  assert.ok(blocks.length > 0, 'index.html must contain an inline app script');
+  blocks.forEach((match, index) => {
+    new vm.Script(match[2], { filename: 'index.inline.' + index + '.js' });
+  });
+});
+
+test('chat avatar characters, font-size styles, and profile badges cannot inject markup', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /escapeHtml\(String\(activeChannelTitle\)\.charAt\(0\)\.toUpperCase\(\)\)/);
+  assert.match(html, /const chatFontSizePx = Math\.min\(24, Math\.max\(12, Number\(window\.chatFontSizePx\) \|\| 15\)\)/);
+  assert.match(html, /font-size:\$\{chatFontSizePx\}px/);
+  assert.match(html, /escapeHtml\(String\(currentUser\.badge \|\| "🎯"\)\.slice\(0, 12\)\)/);
+});
+
+test('voice-room member names and pinned-message authors are escaped', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const remoteVoiceStart = html.indexOf('Object.values(vData).forEach(v => {');
+  const remoteVoiceEnd = html.indexOf('FULL WEBRTC P2P MESH', remoteVoiceStart);
+  const remoteVoice = html.slice(remoteVoiceStart, remoteVoiceEnd);
+  assert.match(remoteVoice, /typeof v\.user !== "string"/);
+  assert.match(remoteVoice, /escapeHtml\(v\.user\.charAt\(0\)\.toUpperCase\(\)\)/);
+  assert.match(remoteVoice, /const safeVoiceUser = escapeHtml\(v\.user\)/);
+  assert.match(remoteVoice, /data-voluser="\$\{safeVoiceUser\}"/);
+  const pinStart = html.indexOf('function renderPinnedPopover');
+  const pinEnd = html.indexOf('function ', pinStart + 20);
+  assert.match(html.slice(pinStart, pinEnd), /escapeHtml\(String\(m\.sender/);
+});
+
+test('custom avatars are type/size limited and Steam links are restricted to Steam Community HTTPS', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /f\.size > 5 \* 1024 \* 1024/);
+  assert.match(html, /isSafeAvatarUrl\(r\.result\)/);
+  assert.match(html, /parsedSteamUrl\.protocol !== "https:"/);
+  assert.match(html, /steamcommunity\.com/);
+  assert.match(html, /rel="noopener noreferrer"/);
+});
+
+test('profile and friend UI escapes account names and validates avatar URLs', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /function isSafeAvatarUrl\(url\)/);
+  assert.match(html, /isSafeAvatarUrl\(currentUser\.avatar\)/);
+  assert.match(html, /const safeAvatarUrl = escapeHtml\(currentUser\.avatar\.trim\(\)\)/);
+  assert.match(html, /isSafeAvatarUrl\(prefs\.avatar\)/);
+  assert.match(html, /escapeHtml\(currentUser\.name\)/);
+  const sidebar = html.slice(html.indexOf('function ensureSidebarDmRow'), html.indexOf('function refreshAllSidebarDmStatuses'));
+  assert.match(sidebar, /querySelectorAll\("\.dm-row\[data-friendname\]"\)/);
+  assert.match(sidebar, /escapeHtml\(friendNick\)/);
+  const friends = html.slice(html.indexOf('function renderFriendsHub'), html.indexOf('async function sendFriendRequest'));
+  assert.match(friends, /escapeHtml\(inviteName\)/);
+  assert.match(friends, /escapeHtml\(friendName\)/);
+});
+
+test('global feedback cards escape all cloud-sourced text and identifiers', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function renderGlobalFeedbackList');
+  const end = html.indexOf('async function submitGlobalFeedback', start);
+  const renderer = html.slice(start, end);
+  assert.match(renderer, /escapeHtml\(String\(item\.author/);
+  assert.match(renderer, /escapeHtml\(String\(item\.category/);
+  assert.match(renderer, /escapeHtml\(String\(item\.text/);
+  assert.match(renderer, /escapeHtml\(String\(item\.status/);
+  assert.doesNotMatch(renderer, /data-id="\$\{item\.id\}"/);
+});
+
+test('remote chat messages escape untrusted HTML and reject unsafe media URLs', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const renderStart = html.indexOf('function renderChatMessages(msgs)');
+  const renderEnd = html.indexOf('\n    function ', renderStart + 20);
+  assert.ok(renderStart >= 0 && renderEnd > renderStart, 'renderChatMessages must be present');
+  const renderer = html.slice(renderStart, renderEnd);
+  assert.match(renderer, /isSafeMediaUrl\(rawMediaUrl\)/);
+  assert.match(renderer, /escapeHtml\(rawMediaUrl\)/);
+  assert.match(renderer, /escapeHtml\(rawAudioUrl\)/);
+  assert.match(renderer, /escapeHtml\(m\.sender\)/);
+  assert.match(renderer, /escapeHtml\(m\.replyTo\.sender\.slice/);
+  assert.match(renderer, /escapeHtml\(String\(s\)\.slice/);
+  assert.doesNotMatch(renderer, /src="\$\{m\.mediaUrl\}"/);
+  assert.doesNotMatch(renderer, /src="\$\{m\.audioUrl\}"/);
+  const replyFn = html.slice(html.indexOf('function startReplyToMessage'), html.indexOf('function cancelReplyMode'));
+  assert.match(replyFn, /escapeHtml\(sender\)/);
+  assert.match(replyFn, /escapeHtml\(preview\)/);
+});
+
+test('chat message IDs use a collision-resistant random suffix', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /window\.crypto && typeof window\.crypto\.randomUUID === "function"/);
+  assert.match(html, /randomUUID\(\)\.replace\(\/-\/g, ""\)/);
+  assert.match(html, /randomMessageId\.slice\(0, 24\)/);
+});
+
+test('chat delivery retries preserve messages and do not drop rapid sends', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.doesNotMatch(html, /__lastMsgSentTs/);
+  assert.match(html, /deliveryState: "sending"/);
+  assert.match(html, /function writeChatMessageToCloud/);
+  assert.match(html, /function retryPendingChatMessages/);
+  assert.match(html, /response && response\.ok/);
+  assert.match(html, /__pendingChatRetryLocks/);
+  assert.match(html, /__channelFetchLocks/);
+  assert.match(html, /pendingLocal/);
+});
+
+test('incoming call validation accepts unique per-attempt IDs only for the correct caller/callee pair', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function isValidIncomingDmCall');
+  const end = html.indexOf('function ', start + 20);
+  const validator = html.slice(start, end);
+  assert.match(validator, /expectedPairPrefix = \[caller, callee\]\.sort\(\)\.join\("_"\) \+ "_"/);
+  assert.match(validator, /callId\.slice\(expectedPairPrefix\.length\)/);
+  assert.match(validator, /\^\\d\{10,16\}_\[a-z0-9\]\{8,32\}\$/i);
+});
+
+test('ending a direct call closes only its peer and preserves other voice-room peer connections', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function endDmCall');
+  const end = html.indexOf('document.getElementById("btnStartDmVoiceCall")', start);
+  const ending = html.slice(start, end);
+  assert.match(ending, /closePeerConnectionForUser\(activeDmCall\.peer\)/);
+  assert.doesNotMatch(ending, /closeAllPeerConnections\(\)/);
+});
+
+test('each DM call gets a unique per-attempt record ID instead of reusing the pair ID', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function startDmCall');
+  const end = html.indexOf('async function acceptIncomingCall', start);
+  const caller = html.slice(start, end);
+  assert.match(caller, /const callPairKey = \[currentUser\.name\.toLowerCase\(\), friendName\.toLowerCase\(\)\]\.sort\(\)\.join\("_"\)/);
+  assert.match(caller, /window\.crypto && typeof window\.crypto\.randomUUID === "function"/);
+  assert.match(caller, /const callId = callPairKey \+ "_" \+ Date\.now\(\) \+ "_" \+ callNonce\.slice\(0, 20\)/);
+});
+
+test('calls require a live microphone and recover serialized WebRTC signaling', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /track\.readyState === "live"/);
+  assert.match(html, /await ensureWebRtcPeerConnection\(friendName, true/);
+  assert.match(html, /__webrtcPollsInFlight/);
+  assert.match(html, /retryOfferResponse/);
+  assert.match(html, /__iceRestartInProgress/);
+  assert.match(html, /failedBy: currentUser\.name/);
+});
+
+test('microphone streams and WebAudio contexts are released after calls or voice-room leave', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /async function stopLocalMediaCapture\(\)/);
+  assert.match(html, /trackSet\.forEach\(track =>/);
+  assert.match(html, /track\.stop\(\)/);
+  assert.match(html, /await audioContext\.close\(\)/);
+  assert.match(html, /async function releaseLocalMediaIfIdle\(\)/);
+  assert.match(html, /if \(currentVoiceRoom \|\| dmCallStillNeedsMic\) return false/);
+  assert.match(html, /await releaseLocalMediaIfIdle\(\)/);
+});
+
+test('microphone DSP context resumes before publishing a processed audio track and falls back to raw capture', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function acquireLocalMediaStream');
+  const end = html.indexOf('function getWebRtcPairKey', start);
+  const capture = html.slice(start, end);
+  assert.match(capture, /await localStudioAudioCtx\.resume\(\)/);
+  assert.match(capture, /localStudioAudioCtx\.state !== "running"/);
+  assert.match(capture, /processedAudioTracks\.length/);
+  assert.match(capture, /localMediaStream = rawStream/);
+  assert.match(capture, /using the real microphone track/);
+});
+
+test('DM calls cannot show connected before the real remote audio path is ready', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const match = html.match(/function isDmCallMediaReady\(pc\) \{[\s\S]*?\n    \}/);
+  assert.ok(match, 'isDmCallMediaReady must exist in the renderer');
+  const readiness = vm.runInNewContext('(' + match[0].replace(/^function isDmCallMediaReady\(pc\)\s*/, 'function (pc) ') + ')');
+  const ready = {
+    connectionState: 'connected',
+    __markensRemoteAudioTrack: { kind: 'audio', readyState: 'live', muted: false },
+    __markensAudioPlaybackReady: true
+  };
+  assert.equal(readiness(ready), true);
+  assert.equal(readiness({ ...ready, connectionState: 'connecting' }), false);
+  assert.equal(readiness({ ...ready, __markensRemoteAudioTrack: null }), false);
+  assert.equal(readiness({ ...ready, __markensRemoteAudioTrack: { kind: 'audio', readyState: 'live', muted: true } }), false);
+  assert.equal(readiness({ ...ready, __markensRemoteAudioTrack: { kind: 'audio', readyState: 'ended', muted: false } }), false);
+  assert.equal(readiness({ ...ready, __markensAudioPlaybackReady: false }), false);
+});
+
+test('call acceptance is not treated as a completed call and timeout paths are bounded', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /state: "accepted"/);
+  assert.match(html, /state = "connecting"/);
+  assert.match(html, /armDmCallConnectWatchdog/);
+  assert.match(html, /currentRecord\.state === "accepted"/);
+  assert.match(html, /function maybeMarkDmCallConnected\(peerName, pc\)/);
+  assert.match(html, /call\.state = "connected"/);
+  assert.match(html, /maybeMarkDmCallConnected\(peerName, pc\)/);
+  assert.doesNotMatch(html, /activeDmCall\.state\s*=\s*"connected"/);
+  assert.doesNotMatch(html, /acceptedCall\.state\s*=\s*"connected"/);
+});
+
+test('missed incoming calls release the single-call lock and accepted-call failures expose hangup controls', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /function showDmCallFailureStage\(call, message\)/);
+  assert.match(html, /const timedOutUnacceptedIncoming = !activeDmCall\.isCaller && activeDmCall\.state === "calling"/);
+  assert.match(html, /if \(timedOutUnacceptedIncoming && activeDmCall && activeDmCall\.callId === callId\)\s*\{\s*activeDmCall = null;\s*\}/);
+  assert.match(html, /showDmCallFailureStage\(acceptedCall, "Не удалось получить доступ к микрофону/);
+  assert.match(html, /showDmCallFailureStage\(acceptedCall, "Не удалось подготовить аудиосоединение/);
+});
+
+test('remote-ended or failed incoming calls hide the ringtone modal and release call state', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function checkIncomingDmCalls');
+  const end = html.indexOf('// SERVER VOICE ROOMS', start);
+  const poller = html.slice(start, end);
+  assert.match(poller, /const wasIncomingRing = !activeDmCall\.isCaller && activeDmCall\.state === "calling"/);
+  assert.match(poller, /if \(incomingModal\) incomingModal\.style\.display = "none"/);
+  assert.match(poller, /if \(activeDmCall && activeDmCall\.callId === failedCall\.callId\) activeDmCall = null/);
+  assert.match(poller, /showDmCallFailureStage\(failedCall, message\)/);
+});
+
+test('incoming calls are revalidated before microphone capture and cancelled rings release state', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /const verificationResponse = await fetchWithTimeout/);
+  assert.match(html, /const incomingStillValid = isValidIncomingDmCall/);
+  assert.match(html, /liveCallRecord\.caller/);
+  assert.match(html, /missedIncomingWasStillRinging/);
+  assert.match(html, /activeDmCall = null/);
+  assert.match(html, /Вызов отменён собеседником/);
+});
+
+test('SDP answers are retried after failed Firebase writes', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /pc\.__pendingSdpAnswer/);
+  assert.match(html, /answerRetryResponse && answerRetryResponse\.ok/);
+  assert.match(html, /Initial WebRTC answer could not be delivered/);
+  assert.match(html, /ICE restart offer could not be delivered/);
+  assert.match(html, /pc\.__lastSdpPublishTs = Date\.now\(\)/);
+});
+
+test('ICE candidate delivery retries idempotently and never silently drops a candidate', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /function queueLocalIceCandidate\(pc, pairKey, peerName, candidate\)/);
+  assert.match(html, /function flushLocalIceCandidateQueue\(pc, pairKey, peerName\)/);
+  assert.match(html, /__pendingIceCandidates\.delete\(candidateId\)/);
+  assert.match(html, /method: "PUT"/);
+  const onIceMatch = html.match(/pc\.onicecandidate = \(event\) => \{[\s\S]*?\n      \};/);
+  assert.ok(onIceMatch, 'ICE candidate event handler must exist');
+  assert.match(onIceMatch[0], /queueLocalIceCandidate\(pc, pairKey, peerName/);
+  assert.doesNotMatch(onIceMatch[0], /method: "POST"/);
+  assert.match(html, /__icePublishRetryTimer/);
+});
+
+test('remote ICE candidates must have a matching authenticated signaling peer name', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /const senderMatches = typeof item\.from === "string" && item\.from\.trim\(\)\.toLowerCase\(\) === peerName\.toLowerCase\(\)/);
+  assert.match(html, /if \(!candidateLooksValid \|\| !itemIsFresh \|\| !senderMatches\) continue/);
+});
+
+test('outgoing calls are not invited when local SDP offer creation fails', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /Could not create the initial WebRTC offer/);
+  assert.match(html, /closePeerConnectionForUser\(peerName\);\s*return null;/);
+  assert.match(html, /Initial WebRTC offer is queued for retry/);
+});
+
+test('outgoing invites and call state updates are not silently ignored', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /invitePublished/);
+  assert.match(html, /patchDmCallRecord/);
+  assert.match(html, /activeDmCall\.__missingRecordPolls/);
+  assert.match(html, /hasLiveAudioSender/);
+  assert.match(html, /busyBy: currentUser\.name/);
+});
+
+test('direct-call signaling is isolated by unique call ID', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /__markensSignalingPairKey/);
+  assert.match(html, /baseKey \+ "__dm_" \+ callId/);
+  assert.match(html, /pc\.__markensSignalingPairKey = pairKey/);
+});
+
+test('DM reply previews and voice-note payloads are encrypted before cloud writes', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /cloudPayload\.replyTo\.text = encryptDmPayload/);
+  assert.match(html, /cloudPayload\.replyTo\.e2ee = true/);
+  assert.match(html, /cloudPayload\.audioUrl = encryptDmPayload/);
+  assert.match(html, /cloudPayload\.audioUrlE2ee = true/);
+  assert.match(html, /m\.replyTo\.e2ee/);
+  assert.match(html, /m\.audioUrlE2ee/);
+});
+
+test('DM replies are bound to the original channel and decrypt only for local preview', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /function getPlainChatMessageText/);
+  assert.match(html, /window\.__activeReplyChannel = activeChannel/);
+  assert.match(html, /window\.__activeReplyChannel === channelKey/);
+  assert.match(html, /getPlainChatMessageText\(window\.activeReplyTarget, channelKey, messageIsDm\)/);
+  assert.match(html, /window\.__activeReplyChannel = null/);
+});
+
+test('DM edits use encrypted cloud patches and failed edits enter the retry queue', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /async function patchEditedChatMessage/);
+  assert.match(html, /message\.editPending = true/);
+  assert.match(html, /myLast\.editPending = true/);
+  assert.match(html, /queuedMessage\.editPending === true/);
+  assert.match(html, /message\._localDm = editIsDm/);
+  assert.match(html, /myLast\._localDm = editIsDm/);
+});
+
+test('voice notes use the reliable queue and keep their original channel during recording', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /const recordingChannel = activeChannel/);
+  assert.match(html, /const recordingIsDm = isDmChat/);
+  assert.match(html, /sendChatMessage\("Голосовое сообщение", reader\.result, "audio"/);
+  assert.match(html, /channelKey: recordingChannel/);
+  assert.match(html, /blob\.size > 2 \* 1024 \* 1024/);
+  assert.match(html, /voiceRec\.start\(1000\)/);
+  assert.match(html, /120000/);
+});
+
+test('media attachments are size-limited before FileReader loads them into local storage', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function stageMediaFileForChat');
+  const end = html.indexOf('function clearStagedMedia', start);
+  const stage = html.slice(start, end);
+  assert.match(stage, /maxAttachmentBytes = 4 \* 1024 \* 1024/);
+  assert.match(stage, /allowedImage/);
+  assert.match(stage, /allowedVideo/);
+  assert.match(stage, /file\.size > maxAttachmentBytes/);
+});
+
+test('late ICE candidates are drained again after the active publisher finishes', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /A candidate can arrive between the empty-queue check and this finally block/);
+  assert.match(html, /pc\.__pendingIceCandidates\.size > 0/);
+  assert.match(html, /flushLocalIceCandidateQueue\(pc, pairKey, peerName\)\.catch/);
+});
+
+test('failed chat edits and sends are retained and retried without unhandled promise rejections', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function retryPendingChatMessages');
+  const end = html.indexOf('async function fetchChannelMessages', start);
+  const retry = html.slice(start, end);
+  assert.match(retry, /m\.editPending === true/);
+  assert.match(retry, /patchEditedChatMessage\(key, queuedMessage/);
+  assert.match(retry, /writeChatMessageToCloud\(key, queuedMessage/);
+  assert.match(retry, /Could not prepare queued message for delivery/);
+  assert.match(retry, /__pendingChatRetryLocks\.delete\(key\)/);
 });
 
 (async () => {
