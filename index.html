@@ -5575,7 +5575,9 @@
       const pc = activePeerConnections[peerName];
       if (pc) {
         if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+        if (pc.__icePublishRetryTimer) clearTimeout(pc.__icePublishRetryTimer);
         pc.__iceRestartTimer = null;
+        pc.__icePublishRetryTimer = null;
         try { pc.close(); } catch (e) {}
         delete activePeerConnections[peerName];
       }
@@ -5607,6 +5609,67 @@
           }
         } catch (_e) {}
       }
+    }
+
+    async function flushLocalIceCandidateQueue(pc, pairKey, peerName) {
+      if (!pc || pc.connectionState === "closed") return false;
+      if (pc.__icePublishPromise) return pc.__icePublishPromise;
+      if (!pc.__pendingIceCandidates) pc.__pendingIceCandidates = new Map();
+
+      pc.__icePublishPromise = (async () => {
+        const urlBase = `${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/ice_${encodeURIComponent(currentUser.name)}`;
+        while (pc.connectionState !== "closed" && pc.__pendingIceCandidates.size > 0) {
+          const [candidateId, payload] = pc.__pendingIceCandidates.entries().next().value;
+          let delivered = false;
+          for (let attempt = 1; attempt <= 4; attempt++) {
+            try {
+              const response = await fetchWithTimeout(`${urlBase}/${encodeURIComponent(candidateId)}.json`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+              }, 4500);
+              if (response && response.ok) {
+                delivered = true;
+                break;
+              }
+            } catch (_error) {}
+            if (attempt < 4) await new Promise(resolve => setTimeout(resolve, attempt * 300));
+          }
+
+          if (delivered) {
+            pc.__pendingIceCandidates.delete(candidateId);
+          } else {
+            if (!pc.__icePublishRetryTimer) {
+              pc.__icePublishRetryTimer = setTimeout(() => {
+                pc.__icePublishRetryTimer = null;
+                flushLocalIceCandidateQueue(pc, pairKey, peerName).catch(error =>
+                  console.warn("ICE candidate queue retry failed:", peerName, error)
+                );
+              }, 3500);
+            }
+            break;
+          }
+        }
+        return pc.__pendingIceCandidates.size === 0;
+      })().finally(() => {
+        pc.__icePublishPromise = null;
+      });
+
+      return pc.__icePublishPromise;
+    }
+
+    function queueLocalIceCandidate(pc, pairKey, peerName, candidate) {
+      if (!pc || !candidate || pc.connectionState === "closed") return;
+      if (!pc.__pendingIceCandidates) pc.__pendingIceCandidates = new Map();
+      const candidateId = "c_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10);
+      pc.__pendingIceCandidates.set(candidateId, {
+        from: currentUser.name,
+        candidate,
+        ts: Date.now()
+      });
+      flushLocalIceCandidateQueue(pc, pairKey, peerName).catch(error =>
+        console.warn("ICE candidate publish failed:", peerName, error)
+      );
     }
 
     async function ensureWebRtcPeerConnection(peerName, isInitiator = false, needVideo = false) {
@@ -5763,11 +5826,7 @@
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/ice_${encodeURIComponent(currentUser.name)}.json`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ from: currentUser.name, candidate: event.candidate.toJSON(), ts: Date.now() })
-          }, 4000).catch(() => {});
+          queueLocalIceCandidate(pc, pairKey, peerName, event.candidate.toJSON());
         }
       };
 
@@ -5837,10 +5896,23 @@
       };
 
       if (isInitiator) {
+        // SDP creation/local setup is a hard requirement; do not ring the peer without a valid offer.
         try {
           const offer = await pc.createOffer();
           offer.sdp = enhanceSdpForOpusHd(offer.sdp);
           await pc.setLocalDescription(offer);
+          if (!pc.localDescription || pc.localDescription.type !== "offer" || !pc.localDescription.sdp) {
+            throw new Error("The browser did not create a local SDP offer");
+          }
+        } catch (error) {
+          console.warn("Could not create the initial WebRTC offer:", peerName, error);
+          closePeerConnectionForUser(peerName);
+          return null;
+        }
+
+        // A temporary signaling write failure is recoverable: keep the local offer and let the
+        // signaling poller retry publishing that exact offer with the same SDP.
+        try {
           const offerResponse = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -5854,7 +5926,8 @@
           }, 5000);
           if (!offerResponse || !offerResponse.ok) throw new Error("Initial WebRTC offer could not be delivered");
           pc.__lastSdpPublishTs = Date.now();
-        } catch (e) {
+        } catch (error) {
+          console.warn("Initial WebRTC offer is queued for retry:", peerName, error);
           pc.__lastSdpPublishTs = 0;
         }
       }
