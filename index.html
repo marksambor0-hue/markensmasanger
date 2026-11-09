@@ -5951,6 +5951,20 @@
       if (activePeerConnections[peerName]) {
         const existingPc = activePeerConnections[peerName];
         if (existingPc.connectionState !== "closed" && existingPc.connectionState !== "failed") {
+          const existingKey = typeof existingPc.__markensSignalingPairKey === "string"
+            ? existingPc.__markensSignalingPairKey : "";
+          const isCurrentDmPeer = !!(activeDmCall && activeDmCall.peer &&
+            activeDmCall.peer.toLowerCase() === peerName.toLowerCase());
+          const expectedDmKey = isCurrentDmPeer
+            ? [currentUser.name.toLowerCase(), peerName.toLowerCase()].sort().join("__") + "__dm_" + String(activeDmCall.callId || "")
+            : "";
+          const existingIsDmSession = existingKey.includes("__dm_");
+          // A voice-room PC and a one-to-one call must never share a signaling namespace.
+          if ((isCurrentDmPeer && existingKey !== expectedDmKey) ||
+              (!isCurrentDmPeer && existingIsDmSession)) {
+            console.warn("Refusing to reuse a peer connection from another MARKENS session:", peerName);
+            return null;
+          }
           return existingPc;
         }
         try { existingPc.close(); } catch (e) {}
