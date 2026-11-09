@@ -64,6 +64,13 @@ test('cloud OTA rewrites CURRENT_SCRIPT_TS and keeps app/release versions in syn
   assert.equal(updated, 'const CURRENT_SCRIPT_TS = 456;');
 });
 
+test('preload exposed version fallback matches the packaged app version', () => {
+  const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
+  const fallback = preload.match(/let appVersion = ['"]([^'"]+)['"]/);
+  assert.ok(fallback, 'preload must define a safe version fallback');
+  assert.equal(normalizeVersionTag(fallback[1]), normalizeVersionTag(pkg.version));
+});
+
 test('Electron permissions require the exact local app entry page', () => {
   const { pathToFileURL } = require('node:url');
   const appUrl = pathToFileURL(path.join(root, 'index.html')).href;
