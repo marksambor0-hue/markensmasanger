@@ -490,6 +490,14 @@ test('direct-call signaling is isolated by unique call ID', () => {
   assert.match(html, /pc\.__markensSignalingPairKey = pairKey/);
 });
 
+test('DM image and video attachments are encrypted before cloud storage and decrypted for rendering', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /cloudPayload\.mediaUrl = encryptDmPayload/);
+  assert.match(html, /cloudPayload\.mediaUrlE2ee = true/);
+  assert.match(html, /m\.mediaUrlE2ee/);
+  assert.match(html, /decryptDmPayload\(storedMediaUrl, activeChannel\)/);
+});
+
 test('DM reply previews and voice-note payloads are encrypted before cloud writes', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /cloudPayload\.replyTo\.text = encryptDmPayload/);
