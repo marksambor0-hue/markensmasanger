@@ -628,7 +628,7 @@ test('login and registration fail closed when Firebase is unavailable or account
 
 test('Firebase ETag conditional registration allows only one concurrent creator', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  const helperMatch = html.match(/async function createAccountIfAbsent\\(accountUrl, accountPayload, etag\\) \\{[\\s\\S]*?\\n    \\}/);
+  const helperMatch = html.match(/async function createAccountIfAbsent\(accountUrl, accountPayload, etag\) \{[\s\S]*?\n    \}/);
   assert.ok(helperMatch, 'conditional account creation helper must exist');
 
   let storedAccount = null;
@@ -658,7 +658,7 @@ test('Firebase ETag conditional registration allows only one concurrent creator'
 
 test('conditional registration fails closed when Firebase does not expose an ETag', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  const helperMatch = html.match(/async function createAccountIfAbsent\\(accountUrl, accountPayload, etag\\) \\{[\\s\\S]*?\\n    \\}/);
+  const helperMatch = html.match(/async function createAccountIfAbsent\(accountUrl, accountPayload, etag\) \{[\s\S]*?\n    \}/);
   assert.ok(helperMatch, 'conditional account creation helper must exist');
   let writes = 0;
   const create = vm.runInNewContext('(' + helperMatch[0] + ')', {
@@ -678,9 +678,9 @@ test('registration captures its selected mode and uses the ETag from the same ac
   const auth = html.slice(start, end);
   assert.match(auth, /const authMode = isRegMode/);
   assert.match(auth, /"X-Firebase-ETag": "true"/);
-  assert.match(auth, /accountEtag = accRes\\.headers\\.get\\("ETag"\\)/);
-  assert.match(auth, /createAccountIfAbsent\\(accountUrl,[\\s\\S]*?accountEtag\\)/);
-  assert.match(auth, /createResult\\.conflict/);
+  assert.match(auth, /accountEtag = accRes\.headers\.get\("ETag"\)/);
+  assert.match(auth, /createAccountIfAbsent\(accountUrl,[\s\S]*?accountEtag\)/);
+  assert.match(auth, /createResult\.conflict/);
   assert.doesNotMatch(auth, /method: "PUT"/);
 });
 
