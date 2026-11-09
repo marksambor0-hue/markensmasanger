@@ -3665,16 +3665,12 @@
 
     function getAccountScopedStorageKey(baseKey, username) {
       let identity = typeof username === "string" ? username.trim() : "";
-      if (!identity) {
-        try {
-          const saved = loadSavedSession();
-          if (saved && typeof saved.name === "string") identity = saved.name.trim();
-        } catch (e) {}
-      }
       if (!identity && typeof currentUser !== "undefined" && currentUser && typeof currentUser.name === "string") {
         identity = currentUser.name.trim();
       }
-      const safeIdentity = (identity || "guest").toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 64) || "guest";
+      // Encode the full Unicode identity without lossy transliteration or truncation.
+      // Lowercasing/ASCII replacement caused different Cyrillic users to share one cache.
+      const safeIdentity = identity ? encodeURIComponent(identity.normalize("NFKC")) : "guest";
       return baseKey + "::" + safeIdentity;
     }
 
@@ -4058,6 +4054,7 @@
 
       syncAllData();
       pullCrossDeviceProfileFromCloud();
+      restoreUiStateAfterUpdate();
     }
     btnSubmitAuth.onclick = handleAuth;
     inpAuthLogin.addEventListener("keydown", (e) => {
@@ -4137,16 +4134,16 @@
     }
 
     try {
-      const saved = loadSavedSession();
-      if (saved && typeof saved.name === "string" && saved.name.trim() && saved.name.toLowerCase() !== "markens") {
-        currentUser = { ...saved, isOwner: false };
-        currentUser.vortexAccepted_v25 = safeGet("vortex_accepted_v25_" + currentUser.name.toLowerCase()) === "1";
-        currentUser.joinedVortex = currentUser.vortexAccepted_v25;
-        authModal.style.display = "none";
-      } else {
-        currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
-        authModal.style.display = "flex";
+      // A localStorage/cookie profile is not an authentication credential: it can be
+      // edited or copied between Windows users. Never auto-login from this object.
+      // Keep the last login as a convenience hint only; the server password check is
+      // required on every fresh app start until a real server-issued auth token exists.
+      const savedHint = loadSavedSession();
+      if (savedHint && typeof savedHint.name === "string" && savedHint.name.trim() && savedHint.name.toLowerCase() !== "markens") {
+        inpAuthLogin.value = savedHint.name.trim().slice(0, 32);
       }
+      currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+      authModal.style.display = "flex";
       applyUserUI();
     } catch (e) {
       console.error("Startup init error:", e);
@@ -7933,15 +7930,15 @@ goto loop`;
           chatDraft: chatInput ? chatInput.value : "",
           ts: Date.now()
         };
-        safeSet("markens_update_restore_state", JSON.stringify(state));
+        safeSet(getAccountScopedStorageKey("markens_update_restore_state", currentUser.name), JSON.stringify(state));
       } catch (e) {}
     }
 
     function restoreUiStateAfterUpdate() {
       try {
-        const raw = safeGet("markens_update_restore_state");
+        if (!currentUser || !currentUser.name || currentUser.name === "Гость") return;\n        const restoreKey = getAccountScopedStorageKey("markens_update_restore_state", currentUser.name);\n        const raw = safeGet(restoreKey);
         if (!raw) return;
-        safeRemove("markens_update_restore_state");
+        safeRemove(restoreKey);
         const st = JSON.parse(raw);
         if (!st || (Date.now() - (st.ts || 0) > 120000)) return;
 
