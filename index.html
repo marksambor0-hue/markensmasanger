@@ -9343,9 +9343,9 @@ goto loop`;
         refreshXpUI();
         return;
       }
-      const savedXp = safeGet(getAccountScopedStorageKey("markens_xp", currentUser.name);
-      const savedLvl = safeGet(getAccountScopedStorageKey("markens_lvl", currentUser.name);
-      let savedBadge = safeGet(getAccountScopedStorageKey("markens_badge", currentUser.name);
+      const savedXp = safeGet(getAccountScopedStorageKey("markens_xp", currentUser.name));
+      const savedLvl = safeGet(getAccountScopedStorageKey("markens_lvl", currentUser.name));
+      let savedBadge = safeGet(getAccountScopedStorageKey("markens_badge", currentUser.name));
       if (savedBadge === "👑") savedBadge = "🎯";
 
       currentUser.level = savedLvl ? parseInt(savedLvl, 10) : 3;
