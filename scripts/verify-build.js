@@ -594,7 +594,7 @@ test('fresh startup never grants the creator or guest access without a saved non
   assert.match(html, /authModal\.style\.display = "flex"/);
   assert.match(html, /Для безопасного входа введите имя пользователя и пароль/);
   assert.doesNotMatch(html, /inpAuthPass\.value = "12345"/);
-  assert.match(html, /saved\.name\.toLowerCase\(\) !== "markens"/);
+  assert.match(html, /savedHint\.name\.toLowerCase\(\) !== "markens"/);
 });
 
 test('login and registration fail closed when Firebase is unavailable or account state is invalid', () => {
