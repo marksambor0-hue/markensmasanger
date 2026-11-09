@@ -619,10 +619,12 @@ test('login and registration fail closed when Firebase is unavailable or account
   const auth = html.slice(start, end);
   assert.match(auth, /Authentication is fail-closed/);
   assert.match(auth, /Не удалось проверить аккаунт/);
-  assert.match(auth, /if \(isRegMode\)/);
+  assert.match(auth, /const authMode = isRegMode/);
+  assert.match(auth, /if \(authMode\)/);
   assert.match(auth, /Аккаунт не найден\. Переключитесь на регистрацию/);
   assert.match(auth, /Неверный логин или пароль/);
-  assert.match(auth, /if \(!createRes \|\| !createRes\.ok\)/);
+  assert.match(auth, /createAccountIfAbsent\(accountUrl,/);
+  assert.match(auth, /createResult\.conflict/);
   assert.doesNotMatch(auth, /Если сеть недоступна, продолжаем локальный вход/);
 });
 
