@@ -526,7 +526,7 @@ test('DM replies are bound to the original channel and decrypt only for local pr
   assert.match(html, /function getPlainChatMessageText/);
   assert.match(html, /window\.__activeReplyChannel = activeChannel/);
   assert.match(html, /window\.__activeReplyChannel === channelKey/);
-  assert.match(html, /getPlainChatMessageText\(window\.activeReplyTarget, channelKey, messageIsDm\)/);
+  assert.match(html, /getPlainChatMessageText\(replyTarget, channelKey, messageIsDm\)/);
   assert.match(html, /window\.__activeReplyChannel = null/);
 });
 
