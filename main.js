@@ -37,7 +37,7 @@ function readBundledVersion() {
       return `v${pkg.version.replace(/^v/i, '')}`;
     }
   } catch (_e) {}
-  return 'v31.0.0';
+  return 'v31.10.16';
 }
 
 const BUNDLED_VERSION = readBundledVersion();
@@ -146,7 +146,7 @@ function formatUpdaterError(err) {
 class MarkensUpdaterService extends EventEmitter {
   constructor(options = {}) {
     super();
-    this.currentVersion = normalizeVersionTag(options.currentVersion || BUNDLED_VERSION) || 'v31.0.0';
+    this.currentVersion = normalizeVersionTag(options.currentVersion || BUNDLED_VERSION) || 'v31.10.16';
     this.updater = options.updater !== undefined ? options.updater : autoUpdater;
     this.isPackaged = options.isPackaged !== undefined ? Boolean(options.isPackaged) : Boolean(app && app.isPackaged);
     this.onBeforeQuitAndInstall = typeof options.onBeforeQuitAndInstall === 'function' ? options.onBeforeQuitAndInstall : null;
