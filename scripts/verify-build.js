@@ -554,6 +554,42 @@ test('voice notes use the reliable queue and keep their original channel during 
   assert.match(html, /120000/);
 });
 
+test('fresh startup never grants the creator or guest access without a saved non-owner session', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /let currentUser = \{ name: "Гость", isOwner: false/);
+  assert.match(html, /authModal\.style\.display = "flex"/);
+  assert.match(html, /Для безопасного входа введите имя пользователя и пароль/);
+  assert.doesNotMatch(html, /inpAuthPass\.value = "12345"/);
+  assert.match(html, /saved\.name\.toLowerCase\(\) !== "markens"/);
+});
+
+test('login and registration fail closed when Firebase is unavailable or account state is invalid', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function handleAuth()');
+  const end = html.indexOf('btnSubmitAuth.onclick = handleAuth', start);
+  const auth = html.slice(start, end);
+  assert.match(auth, /Authentication is fail-closed/);
+  assert.match(auth, /Не удалось проверить аккаунт/);
+  assert.match(auth, /if \(isRegMode\)/);
+  assert.match(auth, /Аккаунт не найден\. Переключитесь на регистрацию/);
+  assert.match(auth, /Неверный логин или пароль/);
+  assert.match(auth, /createRes && !createRes\.ok/);
+  assert.doesNotMatch(auth, /Если сеть недоступна, продолжаем локальный вход/);
+});
+
+test('chat, friends, and invite caches are namespaced per account and legacy global caches are not imported', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /function getAccountScopedStorageKey\(baseKey, username\)/);
+  assert.match(html, /baseKey \+ "::" \+ safeIdentity/);
+  assert.match(html, /function activateAccountStorage\(username\)/);
+  assert.match(html, /getAccountScopedStorageKey\("markens_msgs_clean"/);
+  assert.match(html, /getAccountScopedStorageKey\("markens_friends_clean"/);
+  assert.match(html, /getAccountScopedStorageKey\("markens_invites_clean"/);
+  assert.doesNotMatch(html, /safeParseStoredJson\("markens_msgs_clean"/);
+  assert.doesNotMatch(html, /safeParseStoredJson\("markens_friends_clean"/);
+  assert.doesNotMatch(html, /safeParseStoredJson\("markens_invites_clean"/);
+});
+
 test('chat cache quota fallback compacts only persisted history and retains unsent edits/messages', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /function saveLocalStore\(\)/);
