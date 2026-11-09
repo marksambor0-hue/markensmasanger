@@ -4813,6 +4813,71 @@
       messagesScroller.scrollTop = messagesScroller.scrollHeight;
     }
 
+    function createChatMessageId() {
+      const randomMessageId = (window.crypto && typeof window.crypto.randomUUID === "function")
+        ? window.crypto.randomUUID().replace(/-/g, "")
+        : (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) + Date.now().toString(36));
+      return "m_" + Date.now() + "_" + randomMessageId.slice(0, 24);
+    }
+
+    async function sendChatMessage(textOverride, mediaUrl = null, mediaType = null, deliveryContext = null) {
+      const channelKey = deliveryContext && typeof deliveryContext.channelKey === "string" ? deliveryContext.channelKey : activeChannel;
+      const messageIsDm = deliveryContext && typeof deliveryContext.isDm === "boolean" ? deliveryContext.isDm : isDmChat;
+      const rawText = textOverride !== undefined ? textOverride : chatInput.value.trim();
+      const txt = typeof rawText === "string" ? rawText.slice(0, 4000) : String(rawText || "").slice(0, 4000);
+      if (!channelKey || (!txt && !mediaUrl)) return false;
+      if (textOverride === undefined && activeChannel === channelKey) chatInput.value = "";
+
+      const inVortexServerChat = !messageIsDm && isCurrentUserInVortex();
+      if (inVortexServerChat) addVortexXp(15);
+      const rk = getVortexRankInfo(currentUser.level || (currentUser.isOwner ? 999 : 1), currentUser.name);
+      const replyTarget = window.activeReplyTarget && window.__activeReplyChannel === channelKey ? window.activeReplyTarget : null;
+      const replyText = replyTarget ? getPlainChatMessageText(replyTarget, channelKey, messageIsDm) : "";
+      const msgId = createChatMessageId();
+      const msgObj = {
+        id: msgId,
+        sender: currentUser.name,
+        senderBadge: inVortexServerChat ? (currentUser.badge || (currentUser.isOwner ? "👑" : "🎯")) : null,
+        senderLevel: inVortexServerChat ? (currentUser.level || (currentUser.isOwner ? 50 : 1)) : null,
+        senderRank: inVortexServerChat ? rk.title : null,
+        isVortexMsg: inVortexServerChat,
+        text: txt,
+        mediaUrl: mediaType === "audio" ? null : mediaUrl,
+        mediaType: mediaType === "audio" ? null : mediaType,
+        audioUrl: mediaType === "audio" ? mediaUrl : null,
+        replyTo: replyTarget ? {
+          id: replyTarget.id,
+          sender: replyTarget.sender,
+          text: replyText,
+          e2ee: false
+        } : null,
+        time: new Date().toTimeString().slice(0, 5),
+        ts: Date.now(),
+        deliveryState: "sending",
+        _localDm: messageIsDm
+      };
+
+      if (replyTarget && activeChannel === channelKey) cancelReplyMode();
+      if (!Array.isArray(localChannelStore[channelKey])) localChannelStore[channelKey] = [];
+      localChannelStore[channelKey].push(msgObj);
+      saveLocalStore();
+      if (activeChannel === channelKey && chatActiveView.style.display === "flex") {
+        renderChatMessages(localChannelStore[channelKey]);
+      }
+
+      let sent = false;
+      try { sent = await writeChatMessageToCloud(channelKey, msgObj, messageIsDm); }
+      catch (error) { console.warn("Chat message queued after send error:", msgId, error); }
+      const currentMessage = (localChannelStore[channelKey] || []).find(m => m && m.id === msgId);
+      if (currentMessage) currentMessage.deliveryState = sent ? "sent" : "pending";
+      saveLocalStore();
+      if (activeChannel === channelKey && chatActiveView.style.display === "flex") {
+        renderChatMessages(localChannelStore[channelKey] || []);
+      }
+      if (!sent) retryPendingChatMessages(channelKey);
+      return sent;
+    }
+
     const __pendingChatRetryLocks = new Set();
 
     async function writeChatMessageToCloud(channelKey, msgObj, isDm) {
