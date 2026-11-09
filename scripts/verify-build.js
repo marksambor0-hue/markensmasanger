@@ -626,6 +626,64 @@ test('login and registration fail closed when Firebase is unavailable or account
   assert.doesNotMatch(auth, /Если сеть недоступна, продолжаем локальный вход/);
 });
 
+test('Firebase ETag conditional registration allows only one concurrent creator', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const helperMatch = html.match(/async function createAccountIfAbsent\\(accountUrl, accountPayload, etag\\) \\{[\\s\\S]*?\\n    \\}/);
+  assert.ok(helperMatch, 'conditional account creation helper must exist');
+
+  let storedAccount = null;
+  const writes = [];
+  const fakeFetch = async (url, options) => {
+    writes.push({ url, options });
+    if (options.headers['if-match'] !== 'null_etag' || storedAccount !== null) {
+      return { ok: false, status: 412 };
+    }
+    storedAccount = JSON.parse(options.body);
+    return { ok: true, status: 200 };
+  };
+  const create = vm.runInNewContext('(' + helperMatch[0] + ')', { fetchWithTimeout: fakeFetch });
+  const [first, second] = await Promise.all([
+    create('/accounts/alex.json', { name: 'alex', passwordHash: 'hash-a' }, 'null_etag'),
+    create('/accounts/alex.json', { name: 'alex', passwordHash: 'hash-b' }, 'null_etag')
+  ]);
+
+  assert.equal([first, second].filter((result) => result.created).length, 1);
+  assert.equal([first, second].filter((result) => result.conflict).length, 1);
+  assert.equal(writes.length, 2);
+  assert.equal(storedAccount.name, 'alex');
+  assert.ok(['hash-a', 'hash-b'].includes(storedAccount.passwordHash));
+  assert.ok(writes.every((write) => write.options.method === 'PUT'));
+  assert.ok(writes.every((write) => write.options.headers['if-match'] === 'null_etag'));
+});
+
+test('conditional registration fails closed when Firebase does not expose an ETag', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const helperMatch = html.match(/async function createAccountIfAbsent\\(accountUrl, accountPayload, etag\\) \\{[\\s\\S]*?\\n    \\}/);
+  assert.ok(helperMatch, 'conditional account creation helper must exist');
+  let writes = 0;
+  const create = vm.runInNewContext('(' + helperMatch[0] + ')', {
+    fetchWithTimeout: async () => { writes += 1; return { ok: true, status: 200 }; }
+  });
+  await assert.rejects(
+    () => create('/accounts/alex.json', { name: 'alex' }, null),
+    /Missing Firebase ETag/
+  );
+  assert.equal(writes, 0, 'no unguarded PUT may occur without an ETag');
+});
+
+test('registration captures its selected mode and uses the ETag from the same account read', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function handleAuth()');
+  const end = html.indexOf('btnSubmitAuth.onclick = handleAuth', start);
+  const auth = html.slice(start, end);
+  assert.match(auth, /const authMode = isRegMode/);
+  assert.match(auth, /"X-Firebase-ETag": "true"/);
+  assert.match(auth, /accountEtag = accRes\\.headers\\.get\\("ETag"\\)/);
+  assert.match(auth, /createAccountIfAbsent\\(accountUrl,[\\s\\S]*?accountEtag\\)/);
+  assert.match(auth, /createResult\\.conflict/);
+  assert.doesNotMatch(auth, /method: "PUT"/);
+});
+
 test('VORTEX membership, XP, level, badge, and custom rank are scoped to the exact account identity', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   for (const key of ['markens_xp', 'markens_lvl', 'markens_badge', 'markens_custom_rank', 'vortex_accepted_v25', 'vortex_dismissed_v25']) {
