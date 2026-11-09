@@ -611,6 +611,16 @@ test('login and registration fail closed when Firebase is unavailable or account
   assert.doesNotMatch(auth, /Если сеть недоступна, продолжаем локальный вход/);
 });
 
+test('VORTEX membership, XP, level, badge, and custom rank are scoped to the exact account identity', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  for (const key of ['markens_xp', 'markens_lvl', 'markens_badge', 'markens_custom_rank', 'vortex_accepted_v25', 'vortex_dismissed_v25']) {
+    assert.ok(html.includes('getAccountScopedStorageKey("' + key + '"'), 'Missing account scope for ' + key);
+  }
+  assert.doesNotMatch(html, /safe(?:Get|Set|Remove)\(["'](?:markens_xp_|markens_lvl_|markens_badge_|markens_custom_rank_|vortex_accepted_v25_|vortex_dismissed_v25_)/);
+  assert.match(html, /const isOwn = verifyCreatorPrivilege\(\)/);
+  assert.match(html, /if \(verifyCreatorPrivilege\(\)\) return true/);
+});
+
 test('chat, friends, and invite caches are namespaced per account and legacy global caches are not imported', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /function getAccountScopedStorageKey\(baseKey, username\)/);
