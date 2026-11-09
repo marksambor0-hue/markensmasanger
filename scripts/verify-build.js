@@ -562,6 +562,32 @@ test('creator privileges are never inferred from a username alone', () => {
   assert.match(html, /isOwner: isCreatorLogin/);
 });
 
+test('saved local profile is only a login hint and never restores an authenticated session', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('const btnQuickEnt = document.getElementById("btnQuickEnterMarkens")');
+  const end = html.indexOf('// NAVIGATION FLOW', start);
+  const startup = html.slice(start, end);
+  assert.match(startup, /const savedHint = loadSavedSession\(\)/);
+  assert.match(startup, /currentUser = \{ name: "Гость", isOwner: false/);
+  assert.match(startup, /authModal\.style\.display = "flex"/);
+  assert.doesNotMatch(startup, /currentUser = \{ \.\.\.saved/);
+  assert.doesNotMatch(startup, /authModal\.style\.display = "none"/);
+});
+
+test('account cache namespaces preserve distinct Unicode usernames without collisions', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /encodeURIComponent\(identity\.normalize\("NFKC"\)\)/);
+  assert.doesNotMatch(html, /toLowerCase\(\)\.replace\(\/\[\^a-z0-9_-\]/);
+  assert.match(html, /return baseKey \+ "::" \+ safeIdentity/);
+});
+
+test('update restore state is account-scoped and waits until authentication', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /getAccountScopedStorageKey\("markens_update_restore_state", currentUser\.name\)/);
+  assert.match(html, /if \(!currentUser \|\| !currentUser\.name \|\| currentUser\.name === "Гость"\) return/);
+  assert.match(html, /pullCrossDeviceProfileFromCloud\(\);\s*restoreUiStateAfterUpdate\(\);/);
+});
+
 test('fresh startup never grants the creator or guest access without a saved non-owner session', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /let currentUser = \{ name: "Гость", isOwner: false/);
