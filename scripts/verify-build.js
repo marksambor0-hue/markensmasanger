@@ -581,7 +581,7 @@ test('login and registration fail closed when Firebase is unavailable or account
   assert.match(auth, /if \(isRegMode\)/);
   assert.match(auth, /Аккаунт не найден\. Переключитесь на регистрацию/);
   assert.match(auth, /Неверный логин или пароль/);
-  assert.match(auth, /createRes && !createRes\.ok/);
+  assert.match(auth, /if \(!createRes \|\| !createRes\.ok\)/);
   assert.doesNotMatch(auth, /Если сеть недоступна, продолжаем локальный вход/);
 });
 
