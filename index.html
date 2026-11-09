@@ -3957,7 +3957,9 @@
         authErrMsg.textContent = "Аккаунт Создателя нельзя зарегистрировать через обычную форму.";
         return;
       }
-      const passHash = hashUserPassword(cleanLogin, pass);
+      // Creator account path is canonical even if the user types MARKENS/Markens.
+      const accountLogin = isCreatorLogin ? "markens" : cleanLogin;
+      const passHash = hashUserPassword(accountLogin, pass);
 
       if (window.__authLockoutUntil && Date.now() < window.__authLockoutUntil) {
         const waitSec = Math.ceil((window.__authLockoutUntil - Date.now()) / 1000);
@@ -3967,7 +3969,7 @@
 
       // Authentication is fail-closed: no local/guest fallback when Firebase is offline.
       let existingAcc;
-      const accountUrl = `${DB_URL}/accounts/${encodeURIComponent(cleanLogin)}.json`;
+      const accountUrl = `${DB_URL}/accounts/${encodeURIComponent(accountLogin)}.json`;
       try {
         const accRes = await fetchWithTimeout(accountUrl, { cache: "no-store" }, 8000);
         if (!accRes || !accRes.ok) throw new Error("Authentication server unavailable");
@@ -4000,9 +4002,9 @@
 
       const vortexAccepted = isCreatorLogin
         ? true
-        : safeGet(getAccountScopedStorageKey("vortex_accepted_v25", cleanLogin)) === "1";
+        : safeGet(getAccountScopedStorageKey("vortex_accepted_v25", accountLogin)) === "1";
       const authenticatedUser = {
-        name: isCreatorLogin ? "markens" : cleanLogin,
+        name: accountLogin,
         isOwner: isCreatorLogin,
         joinedVortex: vortexAccepted,
         vortexAccepted_v25: vortexAccepted,
@@ -4018,7 +4020,7 @@
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              name: cleanLogin,
+              name: accountLogin,
               passwordHash: passHash,
               vortexAccepted_v25: !!authenticatedUser.vortexAccepted_v25,
               status: "В сети",
@@ -4041,7 +4043,7 @@
 
       window.__failedAuthCount = 0;
       currentUser = authenticatedUser;
-      activateAccountStorage(cleanLogin);
+      activateAccountStorage(accountLogin);
       saveSessionPermanently(currentUser);
       authModal.style.display = "none";
       showFriendsHub();
