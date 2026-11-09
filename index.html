@@ -4077,11 +4077,8 @@
     function applyUserUI() {
       updateMicButtonUI();
       updateDeafenButtonUI();
-      if (currentUser.name.toLowerCase() === "markens") {
-        currentUser.isOwner = true;
-        currentUser.joinedVortex = true;
-      }
-      const isOwn = !!currentUser.isOwner;
+      // Never infer creator privileges from a username alone.
+      const isOwn = !!currentUser.isOwner && currentUser.name.toLowerCase() === "markens";
 
       document.getElementById("dockName").textContent = isOwn ? `👑 ${currentUser.name}` : currentUser.name;
       document.getElementById("rpName").innerHTML = isOwn
