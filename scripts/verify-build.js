@@ -554,6 +554,14 @@ test('voice notes use the reliable queue and keep their original channel during 
   assert.match(html, /120000/);
 });
 
+test('creator login uses the canonical database path regardless of input casing', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /const accountLogin = isCreatorLogin \? "markens" : cleanLogin/);
+  assert.match(html, /accounts\/\$\{encodeURIComponent\(accountLogin\)\}\.json/);
+  assert.match(html, /name: accountLogin/);
+  assert.match(html, /activateAccountStorage\(accountLogin\)/);
+});
+
 test('creator privileges are never inferred from a username alone', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /const isOwn = !!currentUser\.isOwner && currentUser\.name\.toLowerCase\(\) === "markens"/);
