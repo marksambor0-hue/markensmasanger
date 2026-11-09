@@ -4000,7 +4000,7 @@
 
       const vortexAccepted = isCreatorLogin
         ? true
-        : safeGet("vortex_accepted_v25_" + cleanLogin.toLowerCase()) === "1";
+        : safeGet(getAccountScopedStorageKey("vortex_accepted_v25", cleanLogin)) === "1";
       const authenticatedUser = {
         name: isCreatorLogin ? "markens" : cleanLogin,
         isOwner: isCreatorLogin,
@@ -4047,7 +4047,7 @@
       showFriendsHub();
       applyUserUI();
 
-      if (!currentUser.isOwner && !currentUser.vortexAccepted_v25 && safeGet("vortex_dismissed_v25_" + currentUser.name.toLowerCase()) !== "1") {
+      if (!currentUser.isOwner && !currentUser.vortexAccepted_v25 && safeGet(getAccountScopedStorageKey("vortex_dismissed_v25", currentUser.name)) !== "1") {
         const invMod = document.getElementById("vortexInviteModal");
         if (invMod) invMod.style.display = "flex";
       }
@@ -4115,10 +4115,10 @@
       if (adminTab) adminTab.style.display = isOwn ? "flex" : "none";
 
       // Server VORTEX visibility & explicit invite prompt for regular users
-      const hasJoined = isOwn || !!currentUser.vortexAccepted_v25 || safeGet("vortex_accepted_v25_" + currentUser.name.toLowerCase()) === "1";
+      const hasJoined = isOwn || !!currentUser.vortexAccepted_v25 || safeGet(getAccountScopedStorageKey("vortex_accepted_v25", currentUser.name)) === "1";
       currentUser.joinedVortex = hasJoined;
       currentUser.vortexAccepted_v25 = hasJoined;
-      const dismissed = safeGet("vortex_dismissed_v25_" + currentUser.name.toLowerCase()) === "1";
+      const dismissed = safeGet(getAccountScopedStorageKey("vortex_dismissed_v25", currentUser.name)) === "1";
       document.getElementById("guildBtnVortex").style.display = hasJoined ? "flex" : "none";
       document.getElementById("serverInviteBanner").style.display = (!hasJoined && !dismissed) ? "flex" : "none";
       const leaveSrvBtn = document.getElementById("btnLeaveVortexServer");
@@ -4269,7 +4269,7 @@
     async function acceptVortexInvite() {
       currentUser.joinedVortex = true;
       currentUser.vortexAccepted_v25 = true;
-      safeSet("vortex_accepted_v25_" + currentUser.name.toLowerCase(), "1");
+      safeSet(getAccountScopedStorageKey("vortex_accepted_v25", currentUser.name), "1");
       saveSessionPermanently(currentUser);
       const invMod = document.getElementById("vortexInviteModal");
       if (invMod) invMod.style.display = "none";
@@ -4283,7 +4283,7 @@
     }
 
     function declineVortexInvite() {
-      safeSet("vortex_dismissed_v25_" + currentUser.name.toLowerCase(), "1");
+      safeSet(getAccountScopedStorageKey("vortex_dismissed_v25", currentUser.name), "1");
       document.getElementById("serverInviteBanner").style.display = "none";
       const invMod = document.getElementById("vortexInviteModal");
       if (invMod) invMod.style.display = "none";
@@ -4302,8 +4302,8 @@
       btnLeaveSrv.onclick = async () => {
         currentUser.joinedVortex = false;
         currentUser.vortexAccepted_v25 = false;
-        safeRemove("vortex_accepted_v25_" + currentUser.name.toLowerCase());
-        safeRemove("vortex_dismissed_v25_" + currentUser.name.toLowerCase());
+        safeRemove(getAccountScopedStorageKey("vortex_accepted_v25", currentUser.name));
+        safeRemove(getAccountScopedStorageKey("vortex_dismissed_v25", currentUser.name));
         saveSessionPermanently(currentUser);
         applyUserUI();
         showFriendsHub();
@@ -9306,8 +9306,8 @@ goto loop`;
 
     function isCurrentUserInVortex() {
       if (!currentUser || !currentUser.name) return false;
-      if (currentUser.name.toLowerCase() === "markens" || currentUser.isOwner) return true;
-      return !!(currentUser.joinedVortex || currentUser.vortexAccepted_v25 || safeGet("vortex_accepted_v25_" + currentUser.name.toLowerCase()) === "1");
+      if (verifyCreatorPrivilege()) return true;
+      return !!(currentUser.joinedVortex || currentUser.vortexAccepted_v25 || safeGet(getAccountScopedStorageKey("vortex_accepted_v25", currentUser.name)) === "1");
     }
 
     function isViewingVortexServer() {
@@ -9320,7 +9320,7 @@ goto loop`;
         return { title: "Создатель", cls: "rank-creator-overlord", icon: "👑", isCreatorOnly: true };
       }
       const customRankTitle = (username && username.toLowerCase() === currentUser.name.toLowerCase())
-        ? safeGet("markens_custom_rank_" + username.toLowerCase())
+        ? safeGet(getAccountScopedStorageKey("markens_custom_rank", username))
         : null;
       if (customRankTitle) {
         const found = VORTEX_RANKS_PROGRESSION.find(r => r.title === customRankTitle);
@@ -9334,7 +9334,7 @@ goto loop`;
     }
 
     function initUserXpAndRank() {
-      const isOwn = currentUser.name && currentUser.name.toLowerCase() === "markens";
+      const isOwn = verifyCreatorPrivilege();
       if (isOwn) {
         // Creator markens has NO XP accumulation and NO LVL numbers — just 👑 Создатель
         currentUser.level = null;
@@ -9343,9 +9343,9 @@ goto loop`;
         refreshXpUI();
         return;
       }
-      const savedXp = safeGet("markens_xp_" + (currentUser.name || "user").toLowerCase());
-      const savedLvl = safeGet("markens_lvl_" + (currentUser.name || "user").toLowerCase());
-      let savedBadge = safeGet("markens_badge_" + (currentUser.name || "user").toLowerCase());
+      const savedXp = safeGet(getAccountScopedStorageKey("markens_xp", currentUser.name);
+      const savedLvl = safeGet(getAccountScopedStorageKey("markens_lvl", currentUser.name);
+      let savedBadge = safeGet(getAccountScopedStorageKey("markens_badge", currentUser.name);
       if (savedBadge === "👑") savedBadge = "🎯";
 
       currentUser.level = savedLvl ? parseInt(savedLvl, 10) : 3;
@@ -9411,8 +9411,8 @@ goto loop`;
         leveledUp = true;
       }
       const uKey = (currentUser.name || "user").toLowerCase();
-      safeSet("markens_xp_" + uKey, String(currentUser.xp));
-      safeSet("markens_lvl_" + uKey, String(currentUser.level));
+      safeSet(getAccountScopedStorageKey("markens_xp", currentUser.name), String(currentUser.xp));
+      safeSet(getAccountScopedStorageKey("markens_lvl", currentUser.name), String(currentUser.level));
       saveSessionPermanently(currentUser);
       refreshXpUI();
       if (leveledUp) {
@@ -9513,7 +9513,7 @@ goto loop`;
               const ic = btn.getAttribute("data-badge");
               const rl = btn.getAttribute("data-ranklabel");
               if (!isOwn && rl) {
-                safeSet("markens_custom_rank_" + currentUser.name.toLowerCase(), rl);
+                safeSet(getAccountScopedStorageKey("markens_custom_rank", currentUser.name), rl);
               }
               window.selectVortexBadge(ic);
             };
@@ -9527,7 +9527,7 @@ goto loop`;
       if (badgeIcon === "👑" && !currentUser.isOwner) return;
       currentUser.badge = badgeIcon;
       const uKey = (currentUser.name || "user").toLowerCase();
-      safeSet("markens_badge_" + uKey, badgeIcon);
+      safeSet(getAccountScopedStorageKey("markens_badge", currentUser.name), badgeIcon);
       saveSessionPermanently(currentUser);
       refreshXpUI();
       renderChatMessages(localChannelStore[activeChannel] || []);
