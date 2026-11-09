@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/call-chat-reliability-batch-1
+      - fix/account-isolation-auth-batch-2
     paths:
       - 'index.html'
       - 'main.js'
