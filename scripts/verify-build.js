@@ -601,7 +601,7 @@ test('chat, friends, and invite caches are namespaced per account and legacy glo
 test('chat cache quota fallback compacts only persisted history and retains unsent edits/messages', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /function saveLocalStore\(\)/);
-  assert.match(html, /if \(safeSet\("markens_msgs_clean", serialized\)\) return true/);
+  assert.match(html, /if \(safeSet\(getAccountScopedStorageKey\("markens_msgs_clean"\), serialized\)\) return true/);
   assert.match(html, /Quota fallback: compact only the persisted snapshot/);
   assert.match(html, /\["sending", "pending"\]\.includes\(m\.deliveryState\) \|\| m\.editPending === true/);
   assert.match(html, /sent\.slice\(-80\)/);
