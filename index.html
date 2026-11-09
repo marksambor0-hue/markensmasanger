@@ -3927,9 +3927,35 @@
       return null;
     }
 
+    async function createAccountIfAbsent(accountUrl, accountPayload, etag) {
+      // Firebase REST ETags provide an atomic compare-and-set for account creation.
+      // A missing ETag must fail closed: a plain PUT could overwrite another user's account.
+      if (typeof etag !== "string" || !etag.trim()) {
+        throw new Error("Missing Firebase ETag; refusing an unsafe account write");
+      }
+
+      const response = await fetchWithTimeout(accountUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "if-match": etag
+        },
+        body: JSON.stringify(accountPayload)
+      }, 8000);
+
+      if (response && response.status === 412) {
+        return { created: false, conflict: true };
+      }
+      if (!response || !response.ok) {
+        throw new Error("Conditional account creation failed");
+      }
+      return { created: true, conflict: false };
+    }
+
     async function handleAuth() {
       const rawLogin = inpAuthLogin.value.trim();
       const pass = inpAuthPass.value.trim();
+      const authMode = isRegMode;
       authErrMsg.textContent = "";
       if (!rawLogin) {
         authErrMsg.textContent = "Введите имя пользователя";
@@ -3953,7 +3979,7 @@
       }
 
       const isCreatorLogin = cleanLogin.toLowerCase() === "markens";
-      if (isCreatorLogin && isRegMode) {
+      if (isCreatorLogin && authMode) {
         authErrMsg.textContent = "Аккаунт Создателя нельзя зарегистрировать через обычную форму.";
         return;
       }
@@ -3969,17 +3995,24 @@
 
       // Authentication is fail-closed: no local/guest fallback when Firebase is offline.
       let existingAcc;
+      let accountEtag = null;
       const accountUrl = `${DB_URL}/accounts/${encodeURIComponent(accountLogin)}.json`;
       try {
-        const accRes = await fetchWithTimeout(accountUrl, { cache: "no-store" }, 8000);
+        const accRes = await fetchWithTimeout(accountUrl, {
+          cache: "no-store",
+          headers: authMode ? { "X-Firebase-ETag": "true" } : {}
+        }, 8000);
         if (!accRes || !accRes.ok) throw new Error("Authentication server unavailable");
+        if (authMode && accRes.headers && typeof accRes.headers.get === "function") {
+          accountEtag = accRes.headers.get("ETag");
+        }
         existingAcc = await accRes.json();
       } catch (_netErr) {
         authErrMsg.textContent = "Не удалось проверить аккаунт. Проверьте интернет и попробуйте ещё раз.";
         return;
       }
 
-      if (isRegMode) {
+      if (authMode) {
         if (existingAcc !== null && existingAcc !== undefined) {
           authErrMsg.textContent = "Этот никнейм уже занят.";
           return;
@@ -4013,23 +4046,23 @@
         avatar: null
       };
 
-      // Create the account only after the online uniqueness check, and require the write to succeed.
-      if (isRegMode) {
+      // The initial availability read is not enough: another client may register the same
+      // name before this write. Firebase's ETag condition makes this PUT atomic.
+      if (authMode) {
         try {
-          const createRes = await fetchWithTimeout(accountUrl, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: accountLogin,
-              passwordHash: passHash,
-              vortexAccepted_v25: !!authenticatedUser.vortexAccepted_v25,
-              status: "В сети",
-              online: Date.now()
-            })
-          }, 8000);
-          if (!createRes || !createRes.ok) throw new Error("Account creation failed");
+          const createResult = await createAccountIfAbsent(accountUrl, {
+            name: accountLogin,
+            passwordHash: passHash,
+            vortexAccepted_v25: !!authenticatedUser.vortexAccepted_v25,
+            status: "В сети",
+            online: Date.now()
+          }, accountEtag);
+          if (createResult.conflict) {
+            authErrMsg.textContent = "Этот никнейм уже занят. Выберите другой.";
+            return;
+          }
         } catch (_createErr) {
-          authErrMsg.textContent = "Не удалось создать аккаунт на сервере. Попробуйте ещё раз.";
+          authErrMsg.textContent = "Не удалось безопасно создать аккаунт на сервере. Проверьте интернет и попробуйте ещё раз.";
           return;
         }
       } else {
