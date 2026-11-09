@@ -7342,8 +7342,13 @@
     document.getElementById("btnLogout").onclick = () => {
       safeRemove("markens_user_session");
       try { document.cookie = "markens_session=; path=/; max-age=0"; } catch (e) {}
+      currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+      localChannelStore = Object.create(null);
+      myFriends = [];
+      pendingInvites = [];
       document.getElementById("settingsModal").style.display = "none";
       authModal.style.display = "flex";
+      applyUserUI();
     };
 
     // User status toggle
