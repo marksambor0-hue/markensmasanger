@@ -5965,6 +5965,10 @@
             console.warn("Refusing to reuse a peer connection from another MARKENS session:", peerName);
             return null;
           }
+          if (existingPc.__markensSetupComplete !== true) {
+            console.warn("Peer connection setup is still in progress; refusing an unsafe early reuse:", peerName);
+            return null;
+          }
           return existingPc;
         }
         try { existingPc.close(); } catch (e) {}
@@ -5979,6 +5983,7 @@
         return null;
       }
       activePeerConnections[peerName] = pc;
+      pc.__markensSetupComplete = false;
       const pairKey = getWebRtcPairKey(peerName);
       pc.__markensSignalingPairKey = pairKey;
 
@@ -6223,6 +6228,7 @@
           pc.__lastSdpPublishTs = 0;
         }
       }
+      pc.__markensSetupComplete = true;
       return pc;
     }
 
