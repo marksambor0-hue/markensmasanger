@@ -284,7 +284,7 @@ test('remote chat messages escape untrusted HTML and reject unsafe media URLs', 
   const renderer = html.slice(renderStart, renderEnd);
   assert.match(renderer, /isSafeMediaUrl\(rawMediaUrl\)/);
   assert.match(renderer, /escapeHtml\(rawMediaUrl\)/);
-  assert.match(renderer, /escapeHtml\(rawAudioUrl\)/);
+  assert.match(renderer, /escapeHtml\(playableAudioUrl\)/);
   assert.match(renderer, /escapeHtml\(m\.sender\)/);
   assert.match(renderer, /escapeHtml\(m\.replyTo\.sender\.slice/);
   assert.match(renderer, /escapeHtml\(String\(s\)\.slice/);
@@ -329,7 +329,9 @@ test('ending a direct call closes only its peer and preserves other voice-room p
   const start = html.indexOf('async function endDmCall');
   const end = html.indexOf('document.getElementById("btnStartDmVoiceCall")', start);
   const ending = html.slice(start, end);
-  assert.match(ending, /closePeerConnectionForUser\(activeDmCall\.peer\)/);
+  assert.match(ending, /const pKey = getWebRtcPairKey\(peerName\)/);
+  assert.match(ending, /closePeerConnectionForUser\(peerName\)/);
+  assert.ok(ending.indexOf('const pKey = getWebRtcPairKey(peerName)') < ending.indexOf('closePeerConnectionForUser(peerName)'));
   assert.doesNotMatch(ending, /closeAllPeerConnections\(\)/);
 });
 
@@ -502,7 +504,7 @@ test('DM replies are bound to the original channel and decrypt only for local pr
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /function getPlainChatMessageText/);
   assert.match(html, /window\.__activeReplyChannel = activeChannel/);
-  assert.match(html, /window\.__activeReplyChannel === channelKey/);
+  assert.match(html, /window\.__activeReplyChannel === channelKey \|\| window\.__activeReplyChannel === channelKey/);
   assert.match(html, /getPlainChatMessageText\(window\.activeReplyTarget, channelKey, messageIsDm\)/);
   assert.match(html, /window\.__activeReplyChannel = null/);
 });
