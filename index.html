@@ -4668,7 +4668,10 @@
         body.className = "ds-msg-content";
 
         let mediaHtml = "";
-        const rawMediaUrl = typeof m.mediaUrl === "string" ? m.mediaUrl : "";
+        const storedMediaUrl = typeof m.mediaUrl === "string" ? m.mediaUrl : "";
+        const rawMediaUrl = (isDmChat && m.mediaUrlE2ee)
+          ? decryptDmPayload(storedMediaUrl, activeChannel)
+          : storedMediaUrl;
         const mediaIsSafe = isSafeMediaUrl(rawMediaUrl) &&
           !/^data:image\/svg\+xml/i.test(rawMediaUrl) &&
           !/^data:audio\//i.test(rawMediaUrl);
@@ -4885,6 +4888,10 @@
       delete cloudPayload.deliveryState;
       delete cloudPayload._localDm;
       if (isDm) {
+        if (typeof cloudPayload.mediaUrl === "string" && cloudPayload.mediaUrl) {
+          cloudPayload.mediaUrl = encryptDmPayload(cloudPayload.mediaUrl, channelKey);
+          cloudPayload.mediaUrlE2ee = true;
+        }
         if (typeof cloudPayload.audioUrl === "string" && cloudPayload.audioUrl) {
           cloudPayload.audioUrl = encryptDmPayload(cloudPayload.audioUrl, channelKey);
           cloudPayload.audioUrlE2ee = true;
