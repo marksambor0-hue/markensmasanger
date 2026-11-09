@@ -7936,7 +7936,8 @@ goto loop`;
 
     function restoreUiStateAfterUpdate() {
       try {
-        if (!currentUser || !currentUser.name || currentUser.name === "Гость") return;\n        const restoreKey = getAccountScopedStorageKey("markens_update_restore_state", currentUser.name);\n        const raw = safeGet(restoreKey);
+        if (!currentUser || !currentUser.name || currentUser.name === "Гость") return;
+        const restoreKey = getAccountScopedStorageKey("markens_update_restore_state", currentUser.name);\n        const raw = safeGet(restoreKey);
         if (!raw) return;
         safeRemove(restoreKey);
         const st = JSON.parse(raw);
