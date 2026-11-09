@@ -3651,7 +3651,7 @@
     window.computeOtaReleaseSignature = computeOtaReleaseSignature;
     window.verifyCreatorPrivilege = verifyCreatorPrivilege;
 
-    let currentUser = { name: "markens", isOwner: true, joinedVortex: true, status: "В сети", game: null, avatar: null };
+    let currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
     let isRegMode = false;
     let activeChannel = "основной-чат";
     let activeChannelTitle = "основной-чат";
@@ -3663,7 +3663,22 @@
     let ctxTargetMsgId = null;
     let ctxTargetMsgObj = null;
 
-    const savedChannelStore = safeParseStoredJson("markens_msgs_clean", {});
+    function getAccountScopedStorageKey(baseKey, username) {
+      let identity = typeof username === "string" ? username.trim() : "";
+      if (!identity) {
+        try {
+          const saved = loadSavedSession();
+          if (saved && typeof saved.name === "string") identity = saved.name.trim();
+        } catch (e) {}
+      }
+      if (!identity && typeof currentUser !== "undefined" && currentUser && typeof currentUser.name === "string") {
+        identity = currentUser.name.trim();
+      }
+      const safeIdentity = (identity || "guest").toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 64) || "guest";
+      return baseKey + "::" + safeIdentity;
+    }
+
+    const savedChannelStore = safeParseStoredJson(getAccountScopedStorageKey("markens_msgs_clean"), {});
     let localChannelStore = (savedChannelStore && typeof savedChannelStore === "object" && !Array.isArray(savedChannelStore))
       ? Object.assign(Object.create(null), savedChannelStore)
       : Object.create(null);
@@ -3723,7 +3738,7 @@
         console.error("Could not serialize MARKENS chat cache:", error);
         return false;
       }
-      if (safeSet("markens_msgs_clean", serialized)) return true;
+      if (safeSet(getAccountScopedStorageKey("markens_msgs_clean"), serialized)) return true;
 
       // Quota fallback: compact only the persisted snapshot. Keep the live in-memory
       // messages and every unsent/edited message untouched.
@@ -3743,7 +3758,7 @@
       }
       try {
         const compactJson = JSON.stringify(compact);
-        if (safeSet("markens_msgs_clean", compactJson)) {
+        if (safeSet(getAccountScopedStorageKey("markens_msgs_clean"), compactJson)) {
           console.warn("MARKENS chat cache compacted after storage quota was reached; pending messages were preserved.");
           return true;
         }
@@ -3754,14 +3769,33 @@
       return false;
     }
 
-    let myFriends = safeParseStoredJson("markens_friends_clean", []);
-    let pendingInvites = safeParseStoredJson("markens_invites_clean", []);
+    let myFriends = safeParseStoredJson(getAccountScopedStorageKey("markens_friends_clean"), []);
+    let pendingInvites = safeParseStoredJson(getAccountScopedStorageKey("markens_invites_clean"), []);
     myFriends = Array.isArray(myFriends)
       ? Array.from(new Set(myFriends.filter(name => typeof name === "string" && name.trim()).map(name => name.trim().slice(0, 64))))
       : [];
     pendingInvites = Array.isArray(pendingInvites)
       ? pendingInvites.filter(invite => invite && typeof invite.from === "string" && invite.from.trim())
       : [];
+
+    function activateAccountStorage(username) {
+      const scopedMessages = safeParseStoredJson(getAccountScopedStorageKey("markens_msgs_clean", username), {});
+      localChannelStore = scopedMessages && typeof scopedMessages === "object" && !Array.isArray(scopedMessages)
+        ? Object.assign(Object.create(null), scopedMessages)
+        : Object.create(null);
+      for (const key of Object.keys(localChannelStore)) {
+        if (!Array.isArray(localChannelStore[key])) localChannelStore[key] = [];
+      }
+      myFriends = safeParseStoredJson(getAccountScopedStorageKey("markens_friends_clean", username), []);
+      pendingInvites = safeParseStoredJson(getAccountScopedStorageKey("markens_invites_clean", username), []);
+      myFriends = Array.isArray(myFriends)
+        ? Array.from(new Set(myFriends.filter(name => typeof name === "string" && name.trim()).map(name => name.trim().slice(0, 64))))
+        : [];
+      pendingInvites = Array.isArray(pendingInvites)
+        ? pendingInvites.filter(invite => invite && typeof invite.from === "string" && invite.from.trim())
+        : [];
+    }
+
     window.livePresenceMap = {};
 
     function getPresenceEntry(username) {
@@ -3911,6 +3945,7 @@
         inpAuthPass.focus();
         return;
       }
+
       const cleanLogin = rawLogin.replace(/[<>]/g, "").trim();
       if (!cleanLogin || cleanLogin.length > 32) {
         authErrMsg.textContent = "Некорректное имя пользователя (1–32 символа)";
@@ -3920,65 +3955,97 @@
         authErrMsg.textContent = "🛡️ Защита безопасности: этот ник зарезервирован Создателем markens";
         return;
       }
-      const passHash = hashUserPassword(cleanLogin, pass);
+
       const isCreatorLogin = cleanLogin.toLowerCase() === "markens";
-
-      if (isCreatorLogin) {
-        currentUser = {
-          name: "markens",
-          isOwner: true,
-          joinedVortex: true,
-          vortexAccepted_v25: true,
-          status: "В сети",
-          game: null,
-          avatar: null
-        };
-      } else {
-        const vortexAccepted = safeGet("vortex_accepted_v25_" + cleanLogin.toLowerCase()) === "1";
-        currentUser = {
-          name: cleanLogin,
-          isOwner: false,
-          joinedVortex: vortexAccepted,
-          vortexAccepted_v25: vortexAccepted,
-          status: "В сети",
-          game: null,
-          avatar: null
-        };
+      if (isCreatorLogin && isRegMode) {
+        authErrMsg.textContent = "Аккаунт Создателя нельзя зарегистрировать через обычную форму.";
+        return;
       }
+      const passHash = hashUserPassword(cleanLogin, pass);
 
-      // Защита от перебора паролей (Rate-Limit)
-      const nowAuthTs = Date.now();
-      if (window.__authLockoutUntil && nowAuthTs < window.__authLockoutUntil) {
-        const waitSec = Math.ceil((window.__authLockoutUntil - nowAuthTs) / 1000);
+      if (window.__authLockoutUntil && Date.now() < window.__authLockoutUntil) {
+        const waitSec = Math.ceil((window.__authLockoutUntil - Date.now()) / 1000);
         authErrMsg.textContent = `Слишком много попыток. Подождите ${waitSec} сек.`;
         return;
       }
 
-      // 1. Проверяем пароль по базе Firebase (с коротким таймаутом 2.5с, чтобы оффлайн/тесты не зависали)
+      // Authentication is fail-closed: no local/guest fallback when Firebase is offline.
+      let existingAcc;
+      const accountUrl = `${DB_URL}/accounts/${encodeURIComponent(cleanLogin)}.json`;
       try {
-        const accRes = await fetchWithTimeout(`${DB_URL}/accounts/${encodeURIComponent(cleanLogin)}.json`, {}, 2500);
-        if (accRes && accRes.ok) {
-          const existingAcc = await accRes.json();
-          if (existingAcc && typeof existingAcc === "object" && existingAcc.passwordHash) {
-            if (existingAcc.passwordHash !== passHash) {
-              window.__failedAuthCount = (window.__failedAuthCount || 0) + 1;
-              if (window.__failedAuthCount >= 5) {
-                window.__authLockoutUntil = Date.now() + 15000;
-                window.__failedAuthCount = 0;
-              }
-              authErrMsg.textContent = isRegMode
-                ? "Этот никнейм уже занят другим пользователем (неверный пароль)"
-                : "Неверный пароль от аккаунта";
-              return;
-            }
-          }
-        }
+        const accRes = await fetchWithTimeout(accountUrl, { cache: "no-store" }, 8000);
+        if (!accRes || !accRes.ok) throw new Error("Authentication server unavailable");
+        existingAcc = await accRes.json();
       } catch (_netErr) {
-        // Если сеть недоступна, продолжаем локальный вход
+        authErrMsg.textContent = "Не удалось проверить аккаунт. Проверьте интернет и попробуйте ещё раз.";
+        return;
       }
-      window.__failedAuthCount = 0;
 
-      // 2. Успешный вход / регистрация
+      if (isRegMode) {
+        if (existingAcc !== null && existingAcc !== undefined) {
+          authErrMsg.textContent = "Этот никнейм уже занят.";
+          return;
+        }
+      } else {
+        if (!existingAcc || typeof existingAcc !== "object" || typeof existingAcc.passwordHash !== "string") {
+          authErrMsg.textContent = "Аккаунт не найден. Переключитесь на регистрацию.";
+          return;
+        }
+        if (existingAcc.passwordHash !== passHash) {
+          window.__failedAuthCount = (window.__failedAuthCount || 0) + 1;
+          if (window.__failedAuthCount >= 5) {
+            window.__authLockoutUntil = Date.now() + 30000;
+            window.__failedAuthCount = 0;
+          }
+          authErrMsg.textContent = "Неверный логин или пароль.";
+          return;
+        }
+      }
+
+      const vortexAccepted = isCreatorLogin
+        ? true
+        : safeGet("vortex_accepted_v25_" + cleanLogin.toLowerCase()) === "1";
+      const authenticatedUser = {
+        name: isCreatorLogin ? "markens" : cleanLogin,
+        isOwner: isCreatorLogin,
+        joinedVortex: vortexAccepted,
+        vortexAccepted_v25: vortexAccepted,
+        status: "В сети",
+        game: null,
+        avatar: null
+      };
+
+      // Create the account only after the online uniqueness check, and require the write to succeed.
+      if (isRegMode) {
+        try {
+          const createRes = await fetchWithTimeout(accountUrl, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: cleanLogin,
+              passwordHash: passHash,
+              vortexAccepted_v25: !!authenticatedUser.vortexAccepted_v25,
+              status: "В сети",
+              online: Date.now()
+            })
+          }, 8000);
+          if (!createRes || !createRes.ok) throw new Error("Account creation failed");
+        } catch (_createErr) {
+          authErrMsg.textContent = "Не удалось создать аккаунт на сервере. Попробуйте ещё раз.";
+          return;
+        }
+      } else {
+        // Presence metadata only; never rewrite the stored password during login.
+        fetchWithTimeout(accountUrl, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "В сети", online: Date.now() })
+        }, 8000).catch(() => {});
+      }
+
+      window.__failedAuthCount = 0;
+      currentUser = authenticatedUser;
+      activateAccountStorage(cleanLogin);
       saveSessionPermanently(currentUser);
       authModal.style.display = "none";
       showFriendsHub();
@@ -3989,24 +4056,8 @@
         if (invMod) invMod.style.display = "flex";
       }
 
-      // 3. Сохраняем крипто-хеш пароля и статус в Firebase
-      (async () => {
-        try {
-          await fetch(`${DB_URL}/accounts/${encodeURIComponent(cleanLogin)}.json`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: cleanLogin,
-              passwordHash: passHash,
-              vortexAccepted_v25: !!currentUser.vortexAccepted_v25,
-              status: "В сети",
-              online: Date.now()
-            })
-          });
-        } catch (e) {}
-        syncAllData();
-        pullCrossDeviceProfileFromCloud();
-      })();
+      syncAllData();
+      pullCrossDeviceProfileFromCloud();
     }
     btnSubmitAuth.onclick = handleAuth;
     inpAuthLogin.addEventListener("keydown", (e) => {
@@ -4083,31 +4134,28 @@
     const btnQuickEnt = document.getElementById("btnQuickEnterMarkens");
     if (btnQuickEnt) {
       btnQuickEnt.onclick = () => {
-        const typedNick = inpAuthLogin.value.trim();
-        if (typedNick) {
-          if (!inpAuthPass.value.trim()) inpAuthPass.value = "12345";
-          handleAuth();
-        } else {
-          authModal.style.display = "none";
-          applyUserUI();
-          showFriendsHub();
-        }
+        authErrMsg.textContent = "Для безопасного входа введите имя пользователя и пароль.";
+        inpAuthLogin.focus();
       };
     }
 
     try {
       const saved = loadSavedSession();
-      if (saved && saved.name) {
-        currentUser = saved;
-        if (currentUser.name.toLowerCase() !== "markens") {
-          currentUser.isOwner = false;
-          currentUser.vortexAccepted_v25 = safeGet("vortex_accepted_v25_" + currentUser.name.toLowerCase()) === "1";
-          currentUser.joinedVortex = currentUser.vortexAccepted_v25;
-        }
+      if (saved && typeof saved.name === "string" && saved.name.trim() && saved.name.toLowerCase() !== "markens") {
+        currentUser = { ...saved, isOwner: false };
+        currentUser.vortexAccepted_v25 = safeGet("vortex_accepted_v25_" + currentUser.name.toLowerCase()) === "1";
+        currentUser.joinedVortex = currentUser.vortexAccepted_v25;
+        authModal.style.display = "none";
+      } else {
+        currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+        authModal.style.display = "flex";
       }
-      authModal.style.display = "none";
       applyUserUI();
-    } catch (e) { console.error("Startup init error:", e); }
+    } catch (e) {
+      console.error("Startup init error:", e);
+      currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+      authModal.style.display = "flex";
+    }
 
     // NAVIGATION FLOW
     const guildBtnDM = document.getElementById("guildBtnDM");
@@ -4442,10 +4490,10 @@
         item.querySelector(".accept").onclick = (e) => {
           e.stopPropagation();
           pendingInvites = pendingInvites.filter(x => x.from !== inv.from);
-          safeSet("markens_invites_clean", JSON.stringify(pendingInvites));
+          safeSet(getAccountScopedStorageKey("markens_invites_clean"), JSON.stringify(pendingInvites));
           if (!myFriends.includes(inv.from)) {
             myFriends.push(inv.from);
-            safeSet("markens_friends_clean", JSON.stringify(myFriends));
+            safeSet(getAccountScopedStorageKey("markens_friends_clean"), JSON.stringify(myFriends));
           }
           fetch(`${DB_URL}/friends_v22/${encodeURIComponent(currentUser.name)}/${encodeURIComponent(inv.from)}.json`, {
             method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: inv.from, ts: Date.now() })
@@ -4457,7 +4505,7 @@
         item.querySelector(".decline").onclick = (e) => {
           e.stopPropagation();
           pendingInvites = pendingInvites.filter(x => x.from !== inv.from);
-          safeSet("markens_invites_clean", JSON.stringify(pendingInvites));
+          safeSet(getAccountScopedStorageKey("markens_invites_clean"), JSON.stringify(pendingInvites));
           fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(currentUser.name)}/${encodeURIComponent(inv.from)}.json`, { method: "DELETE" }).catch(() => {});
           renderFriendsHub();
         };
@@ -4529,7 +4577,7 @@
       inp.value = "";
       if (!myFriends.includes(nick)) {
         myFriends.push(nick);
-        safeSet("markens_friends_clean", JSON.stringify(myFriends));
+        safeSet(getAccountScopedStorageKey("markens_friends_clean"), JSON.stringify(myFriends));
       }
       fb.style.display = "block";
       fb.style.color = "var(--green)";
@@ -7536,7 +7584,7 @@ goto loop`;
           const fData = await fRes.json();
           if (fData && typeof fData === "object" && !fData.error) {
             Object.keys(fData).forEach(fn => { if (!myFriends.includes(fn)) myFriends.push(fn); });
-            safeSet("markens_friends_clean", JSON.stringify(myFriends));
+            safeSet(getAccountScopedStorageKey("markens_friends_clean"), JSON.stringify(myFriends));
           }
         }
         const iRes = await fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(currentUser.name)}.json`);
@@ -7546,7 +7594,7 @@ goto loop`;
             Object.values(iData).forEach(inv => {
               if (inv && inv.from && !pendingInvites.some(x => x.from === inv.from)) pendingInvites.push(inv);
             });
-            safeSet("markens_invites_clean", JSON.stringify(pendingInvites));
+            safeSet(getAccountScopedStorageKey("markens_invites_clean"), JSON.stringify(pendingInvites));
           }
         }
       } catch (e) {}
