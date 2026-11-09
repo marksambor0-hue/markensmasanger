@@ -344,6 +344,9 @@ test('voice-room and one-to-one calls never reuse a peer connection from another
   assert.match(setup, /expectedDmKey/);
   assert.match(setup, /existingIsDmSession/);
   assert.match(setup, /existingKey !== expectedDmKey/);
+  assert.match(setup, /existingPc\.__markensSetupComplete !== true/);
+  assert.match(setup, /pc\.__markensSetupComplete = false/);
+  assert.match(setup, /pc\.__markensSetupComplete = true/);
   assert.match(setup, /!isCurrentDmPeer && existingIsDmSession/);
   assert.match(setup, /Refusing to reuse a peer connection from another MARKENS session/);
 });
