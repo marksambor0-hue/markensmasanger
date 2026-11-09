@@ -335,6 +335,19 @@ test('ending a direct call closes only its peer and preserves other voice-room p
   assert.doesNotMatch(ending, /closeAllPeerConnections\(\)/);
 });
 
+test('voice-room and one-to-one calls never reuse a peer connection from another signaling session', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function ensureWebRtcPeerConnection');
+  const end = html.indexOf('function ', start + 40);
+  const setup = html.slice(start, end);
+  assert.match(setup, /existingKey/);
+  assert.match(setup, /expectedDmKey/);
+  assert.match(setup, /existingIsDmSession/);
+  assert.match(setup, /existingKey !== expectedDmKey/);
+  assert.match(setup, /!isCurrentDmPeer && existingIsDmSession/);
+  assert.match(setup, /Refusing to reuse a peer connection from another MARKENS session/);
+});
+
 test('each DM call gets a unique per-attempt record ID instead of reusing the pair ID', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function startDmCall');
