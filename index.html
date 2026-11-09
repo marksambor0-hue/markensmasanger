@@ -3477,7 +3477,12 @@
         window.__markensPersistStore[k] = strVal;
         syncPersistToWindowName();
       }
-      try { localStorage.setItem(k, strVal); } catch (e) {}
+      try {
+        localStorage.setItem(k, strVal);
+        return true;
+      } catch (e) {
+        return false;
+      }
     }
     function safeRemove(k) {
       if (window.__markensPersistStore) {
@@ -3712,12 +3717,41 @@
       ];
     }
     function saveLocalStore() {
-      try {
-        safeSet("markens_msgs_clean", JSON.stringify(localChannelStore));
-      } catch (e) {
-        // If localStorage is full from video data, keep only recent text messages
-        console.warn("Storage quota exceeded, preserving recent chat cache:", e);
+      let serialized = "";
+      try { serialized = JSON.stringify(localChannelStore); }
+      catch (error) {
+        console.error("Could not serialize MARKENS chat cache:", error);
+        return false;
       }
+      if (safeSet("markens_msgs_clean", serialized)) return true;
+
+      // Quota fallback: compact only the persisted snapshot. Keep the live in-memory
+      // messages and every unsent/edited message untouched.
+      const compact = Object.create(null);
+      for (const [channelKey, messages] of Object.entries(localChannelStore)) {
+        if (!Array.isArray(messages)) continue;
+        const pending = messages.filter(m => m && (["sending", "pending"].includes(m.deliveryState) || m.editPending === true));
+        const sent = messages.filter(m => m && !pending.includes(m));
+        const recentSent = sent.slice(-80).map(m => {
+          const copy = { ...m };
+          if (copy.mediaUrl) copy.mediaUrl = "";
+          if (copy.audioUrl) copy.audioUrl = "";
+          return copy;
+        });
+        compact[channelKey] = [...recentSent, ...pending]
+          .sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+      }
+      try {
+        const compactJson = JSON.stringify(compact);
+        if (safeSet("markens_msgs_clean", compactJson)) {
+          console.warn("MARKENS chat cache compacted after storage quota was reached; pending messages were preserved.");
+          return true;
+        }
+      } catch (error) {
+        console.error("Could not compact MARKENS chat cache:", error);
+      }
+      console.error("MARKENS chat cache could not be persisted; current messages remain available until the app closes.");
+      return false;
     }
 
     let myFriends = safeParseStoredJson("markens_friends_clean", []);
