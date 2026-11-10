@@ -10023,42 +10023,46 @@ goto loop
       } catch (e) {}
     }
 
-    let __isPullingPrefs = false;
+    const __pullingPrefsUsers = new Set();
     async function pullCrossDeviceProfileFromCloud() {
       if (document.visibilityState !== "visible") return;
       if (!currentUser || !currentUser.name) return;
-      if (__isPullingPrefs) return;
-      __isPullingPrefs = true;
+      const prefsUser = currentUser;
+      if (__pullingPrefsUsers.has(prefsUser)) return;
+      __pullingPrefsUsers.add(prefsUser);
       try {
-        const res = await fetch(`${DB_URL}/user_prefs_v26/${encodeURIComponent(currentUser.name.toLowerCase())}.json`);
+        const prefsUrl = `${DB_URL}/user_prefs_v26/${encodeURIComponent(prefsUser.name.toLowerCase())}.json`;
+        const res = await fetch(prefsUrl);
+        if (currentUser !== prefsUser) return;
         if (!res.ok) return;
         const prefs = await res.json();
+        if (currentUser !== prefsUser) return;
         if (!prefs || typeof prefs !== "object" || prefs.error) return;
 
         let changed = false;
-        if (typeof prefs.avatar === "string" && isSafeAvatarUrl(prefs.avatar) && prefs.avatar !== currentUser.avatar) {
+        if (typeof prefs.avatar === "string" && isSafeAvatarUrl(prefs.avatar) && prefs.avatar !== prefsUser.avatar) {
           const safeAvatarUrl = escapeHtml(prefs.avatar.trim());
-          currentUser.avatar = prefs.avatar.trim();
+          prefsUser.avatar = prefs.avatar.trim();
           const dockAvatar = document.querySelector("#dockAvatar");
           const profileAvatar = document.querySelector("#rpAvatar");
           if (dockAvatar) dockAvatar.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot" id="dockStatusDot"></span>`;
           if (profileAvatar) profileAvatar.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot"></span>`;
           changed = true;
         }
-        if (prefs.bio !== undefined && prefs.bio !== currentUser.bio) {
-          currentUser.bio = prefs.bio;
+        if (prefs.bio !== undefined && prefs.bio !== prefsUser.bio) {
+          prefsUser.bio = prefs.bio;
           const inpBio = document.getElementById("inpProfileBio");
           if (inpBio && document.activeElement !== inpBio) inpBio.value = prefs.bio;
           changed = true;
         }
-        if (prefs.badge && prefs.badge !== currentUser.badge && (currentUser.isOwner || prefs.badge !== "👑")) {
-          currentUser.badge = prefs.badge;
+        if (prefs.badge && prefs.badge !== prefsUser.badge && (prefsUser.isOwner || prefs.badge !== "👑")) {
+          prefsUser.badge = prefs.badge;
           changed = true;
         }
-        if (prefs.status && prefs.status !== currentUser.status) {
-          currentUser.status = prefs.status;
+        if (prefs.status && prefs.status !== prefsUser.status) {
+          prefsUser.status = prefs.status;
           const dockSub = document.getElementById("dockSub");
-          if (dockSub && (!currentUser.game || currentUser.game === "NONE")) dockSub.textContent = prefs.status;
+          if (dockSub && (!prefsUser.game || prefsUser.game === "NONE")) dockSub.textContent = prefs.status;
           const dot = document.getElementById("dockStatusDot");
           if (dot) {
             const stCls = (prefs.status === "Не активен") ? "idle" : ((prefs.status === "Не беспокоить") ? "dnd" : ((prefs.status === "Невидимка") ? "offline" : ""));
@@ -10074,10 +10078,12 @@ goto loop
           }
         }
         if (changed) {
-          saveSessionPermanently(currentUser);
+          saveSessionPermanently(prefsUser);
           refreshXpUI();
         }
-      } catch (e) {} finally { __isPullingPrefs = false; }
+      } catch (e) {} finally {
+        __pullingPrefsUsers.delete(prefsUser);
+      }
     }
 
     // Hook profile/theme/avatar changes to push immediately to cloud so Android & PC stay in sync
