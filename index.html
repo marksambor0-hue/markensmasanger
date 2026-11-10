@@ -7382,16 +7382,70 @@
       b.onclick = () => applyThemeClass(b.getAttribute("data-theme") || "");
     });
 
-    document.getElementById("btnLogout").onclick = () => {
-      safeRemove("markens_user_session");
-      try { document.cookie = "markens_session=; path=/; max-age=0"; } catch (e) {}
-      currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
-      localChannelStore = Object.create(null);
-      myFriends = [];
-      pendingInvites = [];
-      document.getElementById("settingsModal").style.display = "none";
-      authModal.style.display = "flex";
-      applyUserUI();
+    async function cleanupActiveSessionForLogout() {
+      if (activeDmCall) {
+        try { await endDmCall(); } catch (error) { console.warn("Could not cleanly end the active DM call during logout:", error); }
+      } else {
+        try { stopRingtone(); } catch (error) {}
+      }
+
+      if (currentVoiceRoom) {
+        const leavingUser = currentUser && currentUser.name;
+        const wasInCinema = currentVoiceRoom.id === "room_cinema";
+        let othersInCinema = 0;
+        try { othersInCinema = countOtherUsersInCinema(); } catch (error) {}
+
+        try {
+          const leaveButton = document.getElementById("btnLeaveVoice");
+          if (leaveButton && typeof leaveButton.onclick === "function") await leaveButton.onclick();
+        } catch (error) {
+          console.warn("Could not cleanly leave the voice room during logout:", error);
+        }
+
+        if (currentVoiceRoom) {
+          currentVoiceRoom = null;
+          try { clearCinemaVideoState(wasInCinema && othersInCinema === 0); } catch (error) {}
+          const rtcPanel = document.getElementById("rtcPanel");
+          if (rtcPanel) rtcPanel.style.display = "none";
+        }
+        if (leavingUser && leavingUser !== "Гость") {
+          try {
+            await fetchWithTimeout(`${DB_URL}/voiceRooms_v22/${encodeURIComponent(leavingUser)}.json`, { method: "DELETE" }, 4000);
+          } catch (error) {}
+        }
+      }
+
+      try { closeAllPeerConnections(); } catch (error) {}
+      try { stopScreenShare(); } catch (error) {}
+      try { await stopLocalMediaCapture(); } catch (error) {}
+      if (micEchoStream) {
+        try { micEchoStream.getTracks().forEach(track => track.stop()); } catch (error) {}
+        micEchoStream = null;
+      }
+      if (micEchoAudioCtx && micEchoAudioCtx.state !== "closed") {
+        try { await micEchoAudioCtx.close(); } catch (error) {}
+      }
+      micEchoAudioCtx = null;
+      micEchoTestActive = false;
+    }
+
+    document.getElementById("btnLogout").onclick = async () => {
+      if (window.__markensLogoutInProgress) return;
+      window.__markensLogoutInProgress = true;
+      try {
+        await cleanupActiveSessionForLogout();
+        safeRemove("markens_user_session");
+        try { document.cookie = "markens_session=; path=/; max-age=0"; } catch (e) {}
+        currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+        localChannelStore = Object.create(null);
+        myFriends = [];
+        pendingInvites = [];
+        document.getElementById("settingsModal").style.display = "none";
+        authModal.style.display = "flex";
+        applyUserUI();
+      } finally {
+        window.__markensLogoutInProgress = false;
+      }
     };
 
     // User status toggle
@@ -7622,29 +7676,41 @@ goto loop`;
     async function syncAllData() {
       if (document.visibilityState !== "visible") return;
       if (__isSyncingAllData) return;
+      const syncUserName = currentUser && typeof currentUser.name === "string" ? currentUser.name : "";
+      if (!syncUserName || syncUserName === "Гость") return;
+
       __isSyncingAllData = true;
       try {
-        const fRes = await fetch(`${DB_URL}/friends_v22/${encodeURIComponent(currentUser.name)}.json`);
+        const fRes = await fetch(`${DB_URL}/friends_v22/${encodeURIComponent(syncUserName)}.json`);
+        if (!currentUser || currentUser.name !== syncUserName) return;
         if (fRes.ok) {
           const fData = await fRes.json();
+          if (!currentUser || currentUser.name !== syncUserName) return;
           if (fData && typeof fData === "object" && !fData.error) {
             Object.keys(fData).forEach(fn => { if (!myFriends.includes(fn)) myFriends.push(fn); });
-            safeSet(getAccountScopedStorageKey("markens_friends_clean"), JSON.stringify(myFriends));
+            safeSet(getAccountScopedStorageKey("markens_friends_clean", syncUserName), JSON.stringify(myFriends));
           }
         }
-        const iRes = await fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(currentUser.name)}.json`);
+        const iRes = await fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(syncUserName)}.json`);
+        if (!currentUser || currentUser.name !== syncUserName) return;
         if (iRes.ok) {
           const iData = await iRes.json();
+          if (!currentUser || currentUser.name !== syncUserName) return;
           if (iData && typeof iData === "object" && !iData.error) {
             Object.values(iData).forEach(inv => {
               if (inv && inv.from && !pendingInvites.some(x => x.from === inv.from)) pendingInvites.push(inv);
             });
-            safeSet(getAccountScopedStorageKey("markens_invites_clean"), JSON.stringify(pendingInvites));
+            safeSet(getAccountScopedStorageKey("markens_invites_clean", syncUserName), JSON.stringify(pendingInvites));
           }
         }
-      } catch (e) {}
-      if (friendsHubView.style.display !== "none") renderFriendsHub();
-      __isSyncingAllData = false;
+      } catch (e) {
+        console.warn("MARKENS account sync failed:", e);
+      } finally {
+        if (currentUser && currentUser.name === syncUserName && friendsHubView.style.display !== "none") {
+          try { renderFriendsHub(); } catch (e) {}
+        }
+        __isSyncingAllData = false;
+      }
     }
 
     let __isSyncingVoice = false;
