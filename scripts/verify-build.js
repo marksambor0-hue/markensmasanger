@@ -689,6 +689,79 @@ test('account sync discards a late response after logout instead of writing it t
   assert.equal(context.__isSyncingAllData, false, 'the sync lock must always be released');
 });
 
+test('cross-device profile sync ignores stale responses after switching accounts', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const syncStart = html.indexOf('const __pullingPrefsUsers = new Set();');
+  const syncEnd = html.indexOf('// Hook profile/theme/avatar changes', syncStart);
+  assert.ok(syncStart >= 0 && syncEnd > syncStart, 'profile sync function must exist');
+  const syncSource = html.slice(syncStart, syncEnd);
+
+  const pendingFetches = [];
+  const savedUsers = [];
+  const bioInput = { value: '' };
+  const alice = { name: 'alice', bio: '', avatar: null, badge: '🎯', status: 'В сети', isOwner: false, game: null };
+  const context = {
+    document: {
+      visibilityState: 'visible',
+      activeElement: null,
+      getElementById: (id) => id === 'inpProfileBio' ? bioInput : null,
+      querySelector: () => null
+    },
+    currentUser: alice,
+    DB_URL: 'https://database.example',
+    fetch: (url) => new Promise((resolve) => pendingFetches.push({ url, resolve })),
+    isSafeAvatarUrl: () => false,
+    escapeHtml: (value) => String(value),
+    safeGet: () => '',
+    applyThemeClass: () => {},
+    saveSessionPermanently: (user) => savedUsers.push(user.name),
+    refreshXpUI: () => {}
+  };
+  const pull = vm.runInNewContext(
+    '(() => {' + syncSource + '; return pullCrossDeviceProfileFromCloud; })()',
+    context
+  );
+
+  const alicePull = pull();
+  assert.equal(pendingFetches.length, 1);
+  await pull();
+  assert.equal(pendingFetches.length, 1, 'duplicate profile pulls for one session must be coalesced');
+
+  let resolveAliceJson;
+  let aliceJsonStarted = false;
+  pendingFetches[0].resolve({
+    ok: true,
+    json: () => {
+      aliceJsonStarted = true;
+      return new Promise((resolve) => { resolveAliceJson = resolve; });
+    }
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(aliceJsonStarted, true, 'the first account response should reach JSON parsing');
+
+  const bob = { name: 'bob', bio: '', avatar: null, badge: '🎯', status: 'В сети', isOwner: false, game: null };
+  context.currentUser = bob;
+  const bobPull = pull();
+  assert.equal(pendingFetches.length, 2, 'a new account session must not be blocked by the old session lock');
+  assert.equal(pendingFetches[0].url, 'https://database.example/user_prefs_v26/alice.json');
+  assert.equal(pendingFetches[1].url, 'https://database.example/user_prefs_v26/bob.json');
+
+  pendingFetches[1].resolve({
+    ok: true,
+    json: async () => ({ bio: 'Bob profile' })
+  });
+  await bobPull;
+  assert.equal(bob.bio, 'Bob profile');
+  assert.equal(bioInput.value, 'Bob profile');
+
+  resolveAliceJson({ bio: 'Alice private profile' });
+  await alicePull;
+  assert.equal(alice.bio, '', 'the old account object must not be modified after its session ends');
+  assert.equal(bob.bio, 'Bob profile', 'a late response from Alice must never overwrite Bob\'s profile');
+  assert.deepEqual(savedUsers, ['bob'], 'only the currently authenticated account may be persisted');
+});
+
 test('update restore state is account-scoped and waits until authentication', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /getAccountScopedStorageKey\("markens_update_restore_state", currentUser\.name\)/);
