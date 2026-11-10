@@ -3668,9 +3668,20 @@
       if (!identity && typeof currentUser !== "undefined" && currentUser && typeof currentUser.name === "string") {
         identity = currentUser.name.trim();
       }
-      // Encode the full Unicode identity without lossy transliteration or truncation.
-      // Lowercasing/ASCII replacement caused different Cyrillic users to share one cache.
-      const safeIdentity = identity ? encodeURIComponent(identity.normalize("NFKC")) : "guest";
+      // Keep existing keys for already-normalized names, but distinguish compatibility
+      // and decomposed Unicode spellings that NFKC would otherwise collapse.
+      let safeIdentity = "guest";
+      if (identity) {
+        const exactIdentity = identity.split("").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("");
+        try {
+          const normalizedIdentity = identity.normalize("NFKC");
+          safeIdentity = encodeURIComponent(normalizedIdentity);
+          if (identity !== normalizedIdentity) safeIdentity += "%u" + exactIdentity;
+        } catch (_identityError) {
+          // Preserve even malformed UTF-16 without letting key generation crash the app.
+          safeIdentity = "%u" + exactIdentity;
+        }
+      }
       return baseKey + "::" + safeIdentity;
     }
 
