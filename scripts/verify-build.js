@@ -589,11 +589,18 @@ test('saved local profile is only a login hint and never restores an authenticat
   assert.doesNotMatch(startup, /authModal\.style\.display = "none"/);
 });
 
-test('account cache namespaces preserve distinct Unicode usernames without collisions', () => {
+test('account cache namespaces distinguish Unicode usernames that NFKC would collapse', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  assert.match(html, /encodeURIComponent\(identity\.normalize\("NFKC"\)\)/);
-  assert.doesNotMatch(html, /toLowerCase\(\)\.replace\(\/\[\^a-z0-9_-\]/);
-  assert.match(html, /return baseKey \+ "::" \+ safeIdentity/);
+  const helperMatch = html.match(/function getAccountScopedStorageKey\\(baseKey, username\\) \\{[\\s\\S]*?\\n    \\}/);
+  assert.ok(helperMatch, 'account-scoped key helper must exist');
+  const getKey = vm.runInNewContext('(' + helperMatch[0] + ')', { currentUser: null });
+  const keyFor = (username) => getKey('markens_msgs_clean', username);
+
+  assert.equal(keyFor('Alex'), 'markens_msgs_clean::Alex', 'ordinary existing cache keys stay compatible');
+  assert.notEqual(keyFor('Alex'), keyFor('Ａlex'), 'fullwidth and ASCII usernames must not share a cache');
+  assert.notEqual(keyFor('é'), keyFor('e\\u0301'), 'composed and decomposed usernames must not share a cache');
+  assert.notEqual(keyFor('A\\uD800'), keyFor('A\\uD801'), 'malformed UTF-16 identities must remain distinct');
+  assert.equal(keyFor('Мария'), 'markens_msgs_clean::' + encodeURIComponent('Мария'));
 });
 
 test('update restore state is account-scoped and waits until authentication', () => {
