@@ -592,7 +592,7 @@ test('saved local profile is only a login hint and never restores an authenticat
 test('account cache namespaces distinguish Unicode usernames that NFKC would collapse', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const helperStart = html.indexOf('function getAccountScopedStorageKey(baseKey, username) {');
-  const helperEnd = html.indexOf("\\n    }", helperStart) + 6;
+  const helperEnd = html.indexOf("\n    }", helperStart) + 6;
   assert.ok(helperStart >= 0 && helperEnd > helperStart, 'account-scoped key helper must exist');
   const helperSource = html.slice(helperStart, helperEnd);
   const getKey = vm.runInNewContext('(' + helperSource + ')', { currentUser: null });
