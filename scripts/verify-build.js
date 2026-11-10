@@ -618,6 +618,7 @@ test('logout closes active call, voice peers, screen share, and microphone resou
   const events = [];
   const context = {
     activeDmCall: { peer: 'bob' },
+    currentUser: { name: 'alice' },
     currentVoiceRoom: { id: 'room_cinema' },
     document: {
       getElementById: (id) => id === 'btnLeaveVoice'
