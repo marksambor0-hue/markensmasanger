@@ -609,6 +609,85 @@ test('account cache namespaces distinguish Unicode usernames that NFKC would col
   assert.equal(keyFor('Мария'), 'markens_msgs_clean::' + encodeURIComponent('Мария'));
 });
 
+test('logout closes active call, voice peers, screen share, and microphone resources', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const helperStart = html.indexOf('async function cleanupActiveSessionForLogout() {');
+  const helperEnd = html.indexOf("\n    }", helperStart) + 6;
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, 'logout cleanup helper must exist');
+  const helperSource = html.slice(helperStart, helperEnd);
+  const events = [];
+  const context = {
+    activeDmCall: { peer: 'bob' },
+    currentVoiceRoom: { id: 'room_cinema' },
+    document: {
+      getElementById: (id) => id === 'btnLeaveVoice'
+        ? { onclick: async () => { events.push('leave-voice-room'); context.currentVoiceRoom = null; } }
+        : null
+    },
+    endDmCall: async () => { events.push('end-dm-call'); },
+    stopRingtone: () => { events.push('stop-ringtone'); },
+    countOtherUsersInCinema: () => 0,
+    clearCinemaVideoState: () => { events.push('clear-cinema'); },
+    closeAllPeerConnections: () => { events.push('close-peer-connections'); },
+    stopScreenShare: () => { events.push('stop-screen-share'); },
+    stopLocalMediaCapture: async () => { events.push('stop-local-media'); },
+    micEchoStream: { getTracks: () => [{ stop: () => events.push('stop-echo-track') }] },
+    micEchoAudioCtx: { state: 'running', close: async () => { events.push('close-echo-context'); } },
+    micEchoTestActive: true
+  };
+  const cleanup = vm.runInNewContext('(' + helperSource + ')', context);
+  await cleanup();
+
+  assert.deepEqual(events, [
+    'end-dm-call',
+    'leave-voice-room',
+    'close-peer-connections',
+    'stop-screen-share',
+    'stop-local-media',
+    'stop-echo-track',
+    'close-echo-context'
+  ]);
+  assert.equal(context.currentVoiceRoom, null);
+  assert.equal(context.micEchoStream, null);
+  assert.equal(context.micEchoAudioCtx, null);
+  assert.equal(context.micEchoTestActive, false);
+});
+
+test('account sync discards a late response after logout instead of writing it to guest storage', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const syncStart = html.indexOf('async function syncAllData() {');
+  const syncEnd = html.indexOf("\n    let __isSyncingVoice", syncStart);
+  assert.ok(syncStart >= 0 && syncEnd > syncStart, 'account sync function must exist');
+  const syncSource = html.slice(syncStart, syncEnd);
+  const writes = [];
+  const context = {
+    document: { visibilityState: 'visible' },
+    __isSyncingAllData: false,
+    currentUser: { name: 'alice' },
+    myFriends: [],
+    pendingInvites: [],
+    DB_URL: 'https://database.example',
+    fetch: async () => ({
+      ok: true,
+      json: async () => {
+        context.currentUser = { name: 'Гость' };
+        return { bob: true };
+      }
+    }),
+    safeSet: (...args) => writes.push(args),
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    friendsHubView: { style: { display: 'none' } },
+    renderFriendsHub: () => { throw new Error('must not render a stale account'); }
+  };
+  const sync = vm.runInNewContext('(' + syncSource + ')', context);
+  await sync();
+
+  assert.deepEqual(context.myFriends, []);
+  assert.deepEqual(context.pendingInvites, []);
+  assert.equal(writes.length, 0, 'stale account data must not be persisted under the guest identity');
+  assert.equal(context.__isSyncingAllData, false, 'the sync lock must always be released');
+});
+
 test('update restore state is account-scoped and waits until authentication', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /getAccountScopedStorageKey\("markens_update_restore_state", currentUser\.name\)/);
