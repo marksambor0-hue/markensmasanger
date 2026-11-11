@@ -1047,6 +1047,80 @@ test('failed chat edits and sends are retained and retried without unhandled pro
   assert.match(retry, /__pendingChatRetryLocks\.delete\(key\)/);
 });
 
+
+test('voice sync never publishes a Guest presence before authentication', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function syncVoiceAndMembers() {');
+  const end = html.indexOf('\\n    // ======================================', start);
+  assert.ok(start >= 0 && end > start, 'voice sync function must exist');
+  const source = html.slice(start, end);
+  let networkCalls = 0;
+  const context = {
+    document: { visibilityState: 'visible' },
+    currentUser: { name: 'Гость', status: 'Не в сети' },
+    __isSyncingVoice: false,
+    fetchWithTimeout: async () => { networkCalls += 1; return { ok: true, json: async () => ({}) }; }
+  };
+  const sync = vm.runInNewContext('(' + source + ')', context);
+  await sync();
+  assert.equal(networkCalls, 0, 'guest startup must not create or refresh a presence record');
+  assert.equal(context.__isSyncingVoice, false, 'guest early return must not acquire the voice sync lock');
+});
+
+test('voice sync discards an in-flight response after the authenticated account changes', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function syncVoiceAndMembers() {');
+  const end = html.indexOf('\\n    // ======================================', start);
+  assert.ok(start >= 0 && end > start, 'voice sync function must exist');
+  const source = html.slice(start, end);
+  const pending = [];
+  const alice = { name: 'alice', status: 'В сети', game: null };
+  const context = {
+    document: { visibilityState: 'visible' },
+    currentUser: alice,
+    currentVoiceRoom: null,
+    __isSyncingVoice: false,
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: () => new Promise((resolve) => pending.push(resolve))
+  };
+  const sync = vm.runInNewContext('(' + source + ')', context);
+  const inFlight = sync();
+  assert.equal(pending.length, 1, 'authenticated voice sync should begin with a voice-room read');
+  context.currentUser = { name: 'bob', status: 'В сети', game: null };
+  pending[0]({ ok: true, json: async () => ({}) });
+  await inFlight;
+  assert.equal(pending.length, 1, 'stale account response must not trigger presence reads or writes');
+  assert.equal(context.__isSyncingVoice, false, 'account switch must release the voice sync lock');
+});
+
+test('voice sync network failures release the lock so the next heartbeat can retry', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function syncVoiceAndMembers() {');
+  const end = html.indexOf('\\n    // ======================================', start);
+  assert.ok(start >= 0 && end > start, 'voice sync function must exist');
+  const source = html.slice(start, end);
+  let requests = 0;
+  const context = {
+    document: { visibilityState: 'visible' },
+    currentUser: { name: 'alice', status: 'В сети', game: null },
+    currentVoiceRoom: null,
+    __isSyncingVoice: false,
+    DB_URL: 'https://database.example',
+    isMobileViewport: () => false,
+    fetchWithTimeout: async () => {
+      requests += 1;
+      if (requests === 1) throw new Error('simulated network timeout');
+      return { ok: false, json: async () => null };
+    }
+  };
+  const sync = vm.runInNewContext('(' + source + ')', context);
+  await sync();
+  assert.equal(context.__isSyncingVoice, false, 'failed request must release the lock');
+  await sync();
+  assert.equal(requests, 5, 'the next heartbeat must retry voice-room, presence, and account reads');
+  assert.equal(context.__isSyncingVoice, false, 'retry must also release the lock');
+});
+
 (async () => {
   let failures = 0;
   for (const item of tests) {
