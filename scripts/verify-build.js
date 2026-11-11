@@ -583,7 +583,7 @@ test('saved local profile is only a login hint and never restores an authenticat
   const end = html.indexOf('// NAVIGATION FLOW', start);
   const startup = html.slice(start, end);
   assert.match(startup, /const savedHint = loadSavedSession\(\)/);
-  assert.match(startup, /currentUser = \{ name: "Гость", isOwner: false/);
+  assert.match(startup, /currentUser = \{ name: "Гость", isAuthenticated: false, isOwner: false/);
   assert.match(startup, /authModal\.style\.display = "flex"/);
   assert.doesNotMatch(startup, /currentUser = \{ \.\.\.saved/);
   assert.doesNotMatch(startup, /authModal\.style\.display = "none"/);
@@ -777,7 +777,7 @@ test('cross-device profile sync ignores stale responses after switching accounts
   await Promise.resolve();
   assert.equal(aliceJsonStarted, true, 'the first account response should reach JSON parsing');
 
-  const bob = { name: 'bob', bio: '', avatar: null, badge: '🎯', status: 'В сети', isOwner: false, game: null };
+  const bob = { name: 'bob', bio: '', avatar: null, badge: '🎯', status: 'В сети', isOwner: false, isAuthenticated: true, game: null };
   context.currentUser = bob;
   const bobPull = pull();
   assert.equal(pendingFetches.length, 2, 'a new account session must not be blocked by the old session lock');
@@ -879,10 +879,10 @@ test('cross-device profile reads and writes preserve case-sensitive account iden
     'https://database.example/user_prefs_v26/alice.json'
   ], 'profile writes for differently-cased account names must not collide');
 
-  const upper = { name: 'Alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false };
+  const upper = { name: 'Alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false, isAuthenticated: true };
   context.currentUser = upper;
   await api.pullCrossDeviceProfileFromCloud();
-  const lower = { name: 'alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false };
+  const lower = { name: 'alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false, isAuthenticated: true };
   context.currentUser = lower;
   await api.pullCrossDeviceProfileFromCloud();
   assert.deepEqual(reads, [
