@@ -762,6 +762,56 @@ test('cross-device profile sync ignores stale responses after switching accounts
   assert.deepEqual(savedUsers, ['bob'], 'only the currently authenticated account may be persisted');
 });
 
+test('cross-device profile reads and writes preserve case-sensitive account identity', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const profileStart = html.indexOf('function getCrossDeviceProfileUrl(username)');
+  const profileEnd = html.indexOf('// Hook profile/theme/avatar changes', profileStart);
+  assert.ok(profileStart >= 0 && profileEnd > profileStart, 'profile URL helper and sync functions must exist');
+  const profileSource = html.slice(profileStart, profileEnd);
+  const writes = [];
+  const reads = [];
+  const context = {
+    DB_URL: 'https://database.example',
+    currentUser: { name: 'Alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false },
+    document: { visibilityState: 'visible', body: { className: '' }, activeElement: null, getElementById: () => null, querySelector: () => null },
+    fetch: async (url, options = {}) => {
+      if (options.method === 'PUT') { writes.push({ url, body: JSON.parse(options.body) }); return { ok: true }; }
+      reads.push(url);
+      return { ok: true, json: async () => ({ bio: url.endsWith('/Alice.json') ? 'Uppercase account' : 'Lowercase account' }) };
+    },
+    isSafeAvatarUrl: () => false,
+    escapeHtml: value => String(value),
+    safeGet: () => '',
+    applyThemeClass: () => {},
+    saveSessionPermanently: () => {},
+    refreshXpUI: () => {}
+  };
+  const api = vm.runInNewContext(
+    '(() => {' + profileSource + '; return { pushCrossDeviceProfileToCloud, pullCrossDeviceProfileFromCloud }; })()',
+    context
+  );
+
+  await api.pushCrossDeviceProfileToCloud();
+  context.currentUser = { name: 'alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false };
+  await api.pushCrossDeviceProfileToCloud();
+  assert.deepEqual(writes.map(item => item.url), [
+    'https://database.example/user_prefs_v26/Alice.json',
+    'https://database.example/user_prefs_v26/alice.json'
+  ], 'profile writes for differently-cased account names must not collide');
+
+  const upper = { name: 'Alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false };
+  context.currentUser = upper;
+  await api.pullCrossDeviceProfileFromCloud();
+  const lower = { name: 'alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false };
+  context.currentUser = lower;
+  await api.pullCrossDeviceProfileFromCloud();
+  assert.deepEqual(reads, [
+    'https://database.example/user_prefs_v26/Alice.json',
+    'https://database.example/user_prefs_v26/alice.json'
+  ], 'profile reads must use the same case-sensitive account identity as authentication');
+  assert.equal(upper.bio, 'Uppercase account');
+  assert.equal(lower.bio, 'Lowercase account');
+});
 test('update restore state is account-scoped and waits until authentication', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /getAccountScopedStorageKey\("markens_update_restore_state", currentUser\.name\)/);
