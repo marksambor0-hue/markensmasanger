@@ -1057,7 +1057,7 @@ test('voice sync never publishes a Guest presence before authentication', async 
   let networkCalls = 0;
   const context = {
     document: { visibilityState: 'visible' },
-    currentUser: { name: 'Гость', status: 'Не в сети' },
+    currentUser: { name: 'Гость', status: 'Не в сети', isAuthenticated: false },
     __isSyncingVoice: false,
     fetchWithTimeout: async () => { networkCalls += 1; return { ok: true, json: async () => ({}) }; }
   };
