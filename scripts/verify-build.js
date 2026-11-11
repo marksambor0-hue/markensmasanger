@@ -691,7 +691,7 @@ test('account sync discards a late response after logout instead of writing it t
 
 test('cross-device profile sync ignores stale responses after switching accounts', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  const syncStart = html.indexOf('const __pullingPrefsUsers = new Set();');
+  const syncStart = html.indexOf('function getCrossDeviceProfileUrl(username)');
   const syncEnd = html.indexOf('// Hook profile/theme/avatar changes', syncStart);
   assert.ok(syncStart >= 0 && syncEnd > syncStart, 'profile sync function must exist');
   const syncSource = html.slice(syncStart, syncEnd);
