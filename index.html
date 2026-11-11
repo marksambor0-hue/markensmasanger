@@ -7681,7 +7681,7 @@ goto loop`;
 
       __isSyncingAllData = true;
       try {
-        const fRes = await fetch(`${DB_URL}/friends_v22/${encodeURIComponent(syncUserName)}.json`);
+        const fRes = await fetchWithTimeout(`${DB_URL}/friends_v22/${encodeURIComponent(syncUserName)}.json`, { cache: "no-store" }, 8000);
         if (!currentUser || currentUser.name !== syncUserName) return;
         if (fRes.ok) {
           const fData = await fRes.json();
@@ -7691,7 +7691,7 @@ goto loop`;
             safeSet(getAccountScopedStorageKey("markens_friends_clean", syncUserName), JSON.stringify(myFriends));
           }
         }
-        const iRes = await fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(syncUserName)}.json`);
+        const iRes = await fetchWithTimeout(`${DB_URL}/friend_requests_v24/${encodeURIComponent(syncUserName)}.json`, { cache: "no-store" }, 8000);
         if (!currentUser || currentUser.name !== syncUserName) return;
         if (iRes.ok) {
           const iData = await iRes.json();
@@ -10043,7 +10043,7 @@ goto loop
       try {
         const prefsUrl = getCrossDeviceProfileUrl(prefsUser.name);
         if (!prefsUrl) return;
-        const res = await fetch(prefsUrl);
+        const res = await fetchWithTimeout(prefsUrl, { cache: "no-store" }, 8000);
         if (currentUser !== prefsUser) return;
         if (!res.ok) return;
         const prefs = await res.json();
