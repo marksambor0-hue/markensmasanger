@@ -694,7 +694,7 @@ test('account sync discards a late response after logout instead of writing it t
 test('account sync times out stalled network reads and can retry on the next cycle', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const syncStart = html.indexOf('async function syncAllData() {');
-  const syncEnd = html.indexOf("\\n    let __isSyncingVoice", syncStart);
+  const syncEnd = html.indexOf("\n    let __isSyncingVoice", syncStart);
   assert.ok(syncStart >= 0 && syncEnd > syncStart, 'account sync function must exist');
   const syncSource = html.slice(syncStart, syncEnd);
   let requestCount = 0;
