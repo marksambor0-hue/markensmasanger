@@ -675,6 +675,7 @@ test('account sync discards a late response after logout instead of writing it t
         return { bob: true };
       }
     }),
+    fetchWithTimeout: (...args) => context.fetch(...args),
     safeSet: (...args) => writes.push(args),
     getAccountScopedStorageKey: (key, username) => key + '::' + username,
     friendsHubView: { style: { display: 'none' } },
@@ -687,6 +688,41 @@ test('account sync discards a late response after logout instead of writing it t
   assert.deepEqual(context.pendingInvites, []);
   assert.equal(writes.length, 0, 'stale account data must not be persisted under the guest identity');
   assert.equal(context.__isSyncingAllData, false, 'the sync lock must always be released');
+});
+
+
+test('account sync times out stalled network reads and can retry on the next cycle', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const syncStart = html.indexOf('async function syncAllData() {');
+  const syncEnd = html.indexOf("\\n    let __isSyncingVoice", syncStart);
+  assert.ok(syncStart >= 0 && syncEnd > syncStart, 'account sync function must exist');
+  const syncSource = html.slice(syncStart, syncEnd);
+  let requestCount = 0;
+  const context = {
+    document: { visibilityState: 'visible' },
+    __isSyncingAllData: false,
+    currentUser: { name: 'alice' },
+    myFriends: [],
+    pendingInvites: [],
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: async () => {
+      requestCount += 1;
+      if (requestCount === 1) throw new Error('network timeout');
+      return { ok: true, json: async () => null };
+    },
+    safeSet: () => {},
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    friendsHubView: { style: { display: 'none' } },
+    renderFriendsHub: () => {},
+    console: { warn: () => {} }
+  };
+  const sync = vm.runInNewContext('(' + syncSource + ')', context);
+
+  await sync();
+  assert.equal(context.__isSyncingAllData, false, 'a timed-out request must release the sync lock');
+  await sync();
+  assert.equal(requestCount, 3, 'the next sync cycle must retry both account endpoints');
+  assert.equal(context.__isSyncingAllData, false, 'a successful retry must also release the sync lock');
 });
 
 test('cross-device profile sync ignores stale responses after switching accounts', async () => {
@@ -710,6 +746,7 @@ test('cross-device profile sync ignores stale responses after switching accounts
     currentUser: alice,
     DB_URL: 'https://database.example',
     fetch: (url) => new Promise((resolve) => pendingFetches.push({ url, resolve })),
+    fetchWithTimeout: (url, options) => context.fetch(url, options),
     isSafeAvatarUrl: () => false,
     escapeHtml: (value) => String(value),
     safeGet: () => '',
@@ -762,6 +799,48 @@ test('cross-device profile sync ignores stale responses after switching accounts
   assert.deepEqual(savedUsers, ['bob'], 'only the currently authenticated account may be persisted');
 });
 
+
+test('cross-device profile sync releases its per-session lock after timeout and retries', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const profileStart = html.indexOf('function getCrossDeviceProfileUrl(username)');
+  const profileEnd = html.indexOf('// Hook profile/theme/avatar changes', profileStart);
+  assert.ok(profileStart >= 0 && profileEnd > profileStart, 'profile sync functions must exist');
+  const profileSource = html.slice(profileStart, profileEnd);
+  const user = { name: 'alice', bio: '', avatar: null, badge: '🎯', status: 'В сети', isOwner: false, game: null };
+  let requestCount = 0;
+  const context = {
+    document: {
+      visibilityState: 'visible',
+      activeElement: null,
+      getElementById: () => null,
+      querySelector: () => null
+    },
+    currentUser: user,
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: async () => {
+      requestCount += 1;
+      if (requestCount === 1) throw new Error('network timeout');
+      return { ok: true, json: async () => ({ bio: 'Recovered profile' }) };
+    },
+    isSafeAvatarUrl: () => false,
+    escapeHtml: value => String(value),
+    safeGet: () => '',
+    applyThemeClass: () => {},
+    saveSessionPermanently: () => {},
+    refreshXpUI: () => {}
+  };
+  const pull = vm.runInNewContext(
+    '(() => {' + profileSource + '; return pullCrossDeviceProfileFromCloud; })()',
+    context
+  );
+
+  await pull();
+  assert.equal(user.bio, '', 'a failed request must not partially apply a profile');
+  await pull();
+  assert.equal(requestCount, 2, 'a later call must not be blocked by a stale in-flight lock');
+  assert.equal(user.bio, 'Recovered profile');
+});
+
 test('cross-device profile reads and writes preserve case-sensitive account identity', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const profileStart = html.indexOf('function getCrossDeviceProfileUrl(username)');
@@ -779,6 +858,7 @@ test('cross-device profile reads and writes preserve case-sensitive account iden
       reads.push(url);
       return { ok: true, json: async () => ({ bio: url.endsWith('/Alice.json') ? 'Uppercase account' : 'Lowercase account' }) };
     },
+    fetchWithTimeout: (url, options) => context.fetch(url, options),
     isSafeAvatarUrl: () => false,
     escapeHtml: value => String(value),
     safeGet: () => '',
