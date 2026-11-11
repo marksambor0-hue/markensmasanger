@@ -7715,15 +7715,19 @@ goto loop`;
 
     let __isSyncingVoice = false;
     async function syncVoiceAndMembers() {
+      const voiceSyncUser = currentUser;
+      const voiceSyncName = voiceSyncUser && typeof voiceSyncUser.name === "string" ? voiceSyncUser.name.trim() : "";
+      // The startup timer is active before authentication. Never publish a synthetic Guest presence.
+      if (!voiceSyncName || voiceSyncName === "Гость") return;
       if (document.visibilityState !== "visible") return;
       if (__isSyncingVoice) return;
       __isSyncingVoice = true;
       try {
         if (currentVoiceRoom) {
-          await fetch(`${DB_URL}/voiceRooms_v22/${encodeURIComponent(currentUser.name)}.json`, {
+          await fetchWithTimeout(`${DB_URL}/voiceRooms_v22/${encodeURIComponent(voiceSyncName)}.json`, {
             method: "PUT", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              user: currentUser.name,
+              user: voiceSyncName,
               roomId: currentVoiceRoom.id,
               roomName: currentVoiceRoom.name,
               mic: !isMicMuted,
@@ -7731,11 +7735,14 @@ goto loop`;
               speaking: isCurrentlySpeaking,
               ts: Date.now()
             })
-          });
+          }, 8000);
+          if (currentUser !== voiceSyncUser) return;
         }
-        const vRes = await fetch(`${DB_URL}/voiceRooms_v22.json`);
+        const vRes = await fetchWithTimeout(`${DB_URL}/voiceRooms_v22.json`, { cache: "no-store" }, 8000);
+        if (currentUser !== voiceSyncUser) return;
         if (vRes.ok) {
           const vData = await vRes.json();
+          if (currentUser !== voiceSyncUser) return;
           ["room_lobby", "room_match", "room_stream", "room_cinema"].forEach(k => {
             const t = document.getElementById("tree_" + k);
             if (t) t.innerHTML = "";
@@ -7747,14 +7754,14 @@ goto loop`;
               if (!v || typeof v.user !== "string" || !v.user.trim() ||
                   typeof v.roomId !== "string" || !/^room_[a-zA-Z0-9_-]{1,64}$/.test(v.roomId)) return;
               v.user = v.user.trim().slice(0, 64);
-              if (v.user.toLowerCase() === currentUser.name.toLowerCase() && !currentVoiceRoom) return;
+              if (v.user.toLowerCase() === voiceSyncName.toLowerCase() && !currentVoiceRoom) return;
               if (v.ts && now - v.ts > 20000) return;
-              if (v.roomId === "room_cinema" && v.user.toLowerCase() !== currentUser.name.toLowerCase()) {
+              if (v.roomId === "room_cinema" && v.user.toLowerCase() !== voiceSyncName.toLowerCase()) {
                 cinemaCount++;
               }
               const tree = document.getElementById("tree_" + v.roomId);
               if (tree) {
-                const isMe = v.user.toLowerCase() === currentUser.name.toLowerCase();
+                const isMe = v.user.toLowerCase() === voiceSyncName.toLowerCase();
                 const isMuted = isMe ? isMicMuted : (v.mic === false);
                 const isDeaf = isMe ? isDeafened : (v.deaf === true);
                 const isSpeaking = isMe ? isCurrentlySpeaking : (v.speaking === true);
@@ -7798,7 +7805,7 @@ goto loop`;
             Object.values(vData).forEach(v => {
               if (!v || !v.roomId || !v.user) return;
               if (v.ts && nowMesh - v.ts > 20000) return;
-              if (v.roomId === currentVoiceRoom.id && v.user.toLowerCase() !== currentUser.name.toLowerCase()) {
+              if (v.roomId === currentVoiceRoom.id && v.user.toLowerCase() !== voiceSyncName.toLowerCase()) {
                 peersInMyRoom.push(v.user);
               }
             });
@@ -7813,11 +7820,13 @@ goto loop`;
 
             // Устанавливаем и опрашиваем WebRTC-соединение с каждым тиммейтом в комнате
             for (const peerName of peersInMyRoom) {
-              const isInitiator = currentUser.name.toLowerCase() < peerName.toLowerCase();
+              const isInitiator = voiceSyncName.toLowerCase() < peerName.toLowerCase();
               if (!activePeerConnections[peerName]) {
                 await ensureWebRtcPeerConnection(peerName, isInitiator, false);
+                if (currentUser !== voiceSyncUser) return;
               }
               await pollWebRtcSignalingForPeer(peerName, false);
+              if (currentUser !== voiceSyncUser) return;
             }
 
             const peersDiag = document.getElementById("rtcDiagPeers");
@@ -7829,25 +7838,30 @@ goto loop`;
 
         // REAL-TIME HEARTBEAT PRESENCE: ping current user active timestamp
         const now = Date.now();
+        if (currentUser !== voiceSyncUser) return;
         const myDeviceLabel = isMobileViewport() ? "📱 Android" : "💻 ПК";
-        fetch(`${DB_URL}/presence_v24/${encodeURIComponent(currentUser.name)}.json`, {
+        fetchWithTimeout(`${DB_URL}/presence_v24/${encodeURIComponent(voiceSyncName)}.json`, {
           method: "PUT", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            user: currentUser.name,
+            user: voiceSyncName,
             lastSeen: now,
             status: currentUser.status || "В сети",
             device: myDeviceLabel,
             game: (currentUser.game && currentUser.game !== 'NONE' && currentUser.game !== 'Нет игры') ? currentUser.game : null,
             gameTs: currentUser.game ? now : null
           })
-        }).catch(() => {});
+        }, 8000).catch(() => {});
 
         // Fetch real active presence
-        const pRes = await fetch(`${DB_URL}/presence_v24.json`);
-        const aRes = await fetch(`${DB_URL}/accounts.json`);
+        const pRes = await fetchWithTimeout(`${DB_URL}/presence_v24.json`, { cache: "no-store" }, 8000);
+        if (currentUser !== voiceSyncUser) return;
+        const aRes = await fetchWithTimeout(`${DB_URL}/accounts.json`, { cache: "no-store" }, 8000);
+        if (currentUser !== voiceSyncUser) return;
         if (aRes.ok) {
           const aData = await aRes.json();
+          if (currentUser !== voiceSyncUser) return;
           const pData = (pRes.ok ? await pRes.json() : {}) || {};
+          if (currentUser !== voiceSyncUser) return;
           window.livePresenceMap = pData;
           refreshAllSidebarDmStatuses();
           if (friendsHubView.style.display !== "none") renderFriendsHub();
@@ -7861,7 +7875,7 @@ goto loop`;
             const onlineBadgesHtml = [];
             allAccounts.forEach(acc => {
               const pInfo = getPresenceEntry(acc.name);
-              const isMe = acc.name.toLowerCase() === currentUser.name.toLowerCase();
+              const isMe = acc.name.toLowerCase() === voiceSyncName.toLowerCase();
               const isOn = isMe ? (currentUser.status !== "Невидимка") : (pInfo && pInfo.lastSeen && pInfo.status !== "Невидимка" && (now - pInfo.lastSeen < 45000));
               if (isOn) {
                 totalOnlineGlobal++;
