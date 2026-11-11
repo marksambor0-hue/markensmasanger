@@ -10004,10 +10004,20 @@ goto loop
     }
 
     // 4. Cross-Device Cloud Sync (Windows <-> Android) for Avatar, Bio, Theme, Status & Badge
+    function getCrossDeviceProfileUrl(username) {
+      const identity = typeof username === "string" ? username.trim() : "";
+      if (!identity || identity === "Гость") return null;
+      // Account names are case-sensitive in /accounts. Keep profile paths case-sensitive too:
+      // lowercasing here made "Alex" and "alex" share one cloud profile record.
+      return `${DB_URL}/user_prefs_v26/${encodeURIComponent(identity)}.json`;
+    }
+
     async function pushCrossDeviceProfileToCloud() {
       if (!currentUser || !currentUser.name) return;
+      const profileUrl = getCrossDeviceProfileUrl(currentUser.name);
+      if (!profileUrl) return;
       try {
-        await fetch(`${DB_URL}/user_prefs_v26/${encodeURIComponent(currentUser.name.toLowerCase())}.json`, {
+        await fetch(profileUrl, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -10031,7 +10041,8 @@ goto loop
       if (__pullingPrefsUsers.has(prefsUser)) return;
       __pullingPrefsUsers.add(prefsUser);
       try {
-        const prefsUrl = `${DB_URL}/user_prefs_v26/${encodeURIComponent(prefsUser.name.toLowerCase())}.json`;
+        const prefsUrl = getCrossDeviceProfileUrl(prefsUser.name);
+        if (!prefsUrl) return;
         const res = await fetch(prefsUrl);
         if (currentUser !== prefsUser) return;
         if (!res.ok) return;
