@@ -4194,7 +4194,7 @@
       applyUserUI();
     } catch (e) {
       console.error("Startup init error:", e);
-      currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+      currentUser = { name: "Гость", isAuthenticated: false, isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
       authModal.style.display = "flex";
     }
 
@@ -7437,7 +7437,7 @@
         await cleanupActiveSessionForLogout();
         safeRemove("markens_user_session");
         try { document.cookie = "markens_session=; path=/; max-age=0"; } catch (e) {}
-        currentUser = { name: "Гость", isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+        currentUser = { name: "Гость", isAuthenticated: false, isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
         localChannelStore = Object.create(null);
         myFriends = [];
         pendingInvites = [];
