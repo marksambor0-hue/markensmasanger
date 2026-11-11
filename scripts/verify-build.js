@@ -618,7 +618,7 @@ test('logout closes active call, voice peers, screen share, and microphone resou
   const events = [];
   const context = {
     activeDmCall: { peer: 'bob' },
-    currentUser: { name: 'alice' },
+    currentUser: { name: 'alice', isAuthenticated: true },
     currentVoiceRoom: { id: 'room_cinema' },
     document: {
       getElementById: (id) => id === 'btnLeaveVoice'
@@ -664,14 +664,14 @@ test('account sync discards a late response after logout instead of writing it t
   const context = {
     document: { visibilityState: 'visible' },
     __isSyncingAllData: false,
-    currentUser: { name: 'alice' },
+    currentUser: { name: 'alice', isAuthenticated: true },
     myFriends: [],
     pendingInvites: [],
     DB_URL: 'https://database.example',
     fetch: async () => ({
       ok: true,
       json: async () => {
-        context.currentUser = { name: 'Гость' };
+        context.currentUser = { name: 'Гость', isAuthenticated: false };
         return { bob: true };
       }
     }),
@@ -701,7 +701,7 @@ test('account sync times out stalled network reads and can retry on the next cyc
   const context = {
     document: { visibilityState: 'visible' },
     __isSyncingAllData: false,
-    currentUser: { name: 'alice' },
+    currentUser: { name: 'alice', isAuthenticated: true },
     myFriends: [],
     pendingInvites: [],
     DB_URL: 'https://database.example',
@@ -735,7 +735,7 @@ test('cross-device profile sync ignores stale responses after switching accounts
   const pendingFetches = [];
   const savedUsers = [];
   const bioInput = { value: '' };
-  const alice = { name: 'alice', bio: '', avatar: null, badge: '🎯', status: 'В сети', isOwner: false, game: null };
+  const alice = { name: 'alice', bio: '', avatar: null, badge: '🎯', status: 'В сети', isOwner: false, isAuthenticated: true, game: null };
   const context = {
     document: {
       visibilityState: 'visible',
@@ -806,7 +806,7 @@ test('cross-device profile sync releases its per-session lock after timeout and 
   const profileEnd = html.indexOf('// Hook profile/theme/avatar changes', profileStart);
   assert.ok(profileStart >= 0 && profileEnd > profileStart, 'profile sync functions must exist');
   const profileSource = html.slice(profileStart, profileEnd);
-  const user = { name: 'alice', bio: '', avatar: null, badge: '🎯', status: 'В сети', isOwner: false, game: null };
+  const user = { name: 'alice', bio: '', avatar: null, badge: '🎯', status: 'В сети', isOwner: false, isAuthenticated: true, game: null };
   let requestCount = 0;
   const context = {
     document: {
@@ -851,7 +851,7 @@ test('cross-device profile reads and writes preserve case-sensitive account iden
   const reads = [];
   const context = {
     DB_URL: 'https://database.example',
-    currentUser: { name: 'Alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false },
+    currentUser: { name: 'Alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false, isAuthenticated: true },
     document: { visibilityState: 'visible', body: { className: '' }, activeElement: null, getElementById: () => null, querySelector: () => null },
     fetch: async (url, options = {}) => {
       if (options.method === 'PUT') { writes.push({ url, body: JSON.parse(options.body) }); return { ok: true }; }
@@ -872,7 +872,7 @@ test('cross-device profile reads and writes preserve case-sensitive account iden
   );
 
   await api.pushCrossDeviceProfileToCloud();
-  context.currentUser = { name: 'alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false };
+  context.currentUser = { name: 'alice', avatar: null, bio: '', status: 'В сети', badge: '🎯', isOwner: false, isAuthenticated: true };
   await api.pushCrossDeviceProfileToCloud();
   assert.deepEqual(writes.map(item => item.url), [
     'https://database.example/user_prefs_v26/Alice.json',
@@ -895,13 +895,13 @@ test('cross-device profile reads and writes preserve case-sensitive account iden
 test('update restore state is account-scoped and waits until authentication', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(html, /getAccountScopedStorageKey\("markens_update_restore_state", currentUser\.name\)/);
-  assert.match(html, /if \(!currentUser \|\| !currentUser\.name \|\| currentUser\.name === "Гость"\) return/);
+  assert.match(html, /if \(!currentUser \|\| !currentUser\.name \|\| currentUser\.isAuthenticated !== true\) return/);
   assert.match(html, /pullCrossDeviceProfileFromCloud\(\);\s*restoreUiStateAfterUpdate\(\);/);
 });
 
 test('fresh startup never grants the creator or guest access without a saved non-owner session', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  assert.match(html, /let currentUser = \{ name: "Гость", isOwner: false/);
+  assert.match(html, /let currentUser = \{ name: "Гость", isAuthenticated: false, isOwner: false/);
   assert.match(html, /authModal\.style\.display = "flex"/);
   assert.match(html, /Для безопасного входа введите имя пользователя и пароль/);
   assert.doesNotMatch(html, /inpAuthPass\.value = "12345"/);
@@ -1051,7 +1051,7 @@ test('failed chat edits and sends are retained and retried without unhandled pro
 test('voice sync never publishes a Guest presence before authentication', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function syncVoiceAndMembers() {');
-  const end = html.indexOf('\\n    // ======================================', start);
+  const end = html.indexOf('\n    // ======================================', start);
   assert.ok(start >= 0 && end > start, 'voice sync function must exist');
   const source = html.slice(start, end);
   let networkCalls = 0;
@@ -1070,11 +1070,11 @@ test('voice sync never publishes a Guest presence before authentication', async 
 test('voice sync discards an in-flight response after the authenticated account changes', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function syncVoiceAndMembers() {');
-  const end = html.indexOf('\\n    // ======================================', start);
+  const end = html.indexOf('\n    // ======================================', start);
   assert.ok(start >= 0 && end > start, 'voice sync function must exist');
   const source = html.slice(start, end);
   const pending = [];
-  const alice = { name: 'alice', status: 'В сети', game: null };
+  const alice = { name: 'alice', status: 'В сети', game: null, isAuthenticated: true };
   const context = {
     document: { visibilityState: 'visible' },
     currentUser: alice,
@@ -1093,16 +1093,65 @@ test('voice sync discards an in-flight response after the authenticated account 
   assert.equal(context.__isSyncingVoice, false, 'account switch must release the voice sync lock');
 });
 
+
+test('an authenticated account named Guest is not mistaken for guest mode', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const voiceStart = html.indexOf('async function syncVoiceAndMembers() {');
+  const voiceEnd = html.indexOf('\n    // ======================================', voiceStart);
+  assert.ok(voiceStart >= 0 && voiceEnd > voiceStart, 'voice sync function must exist');
+  const voiceSource = html.slice(voiceStart, voiceEnd);
+  const pending = [];
+  const account = { name: 'Гость', isAuthenticated: true, status: 'В сети', game: null };
+  const voiceContext = {
+    document: { visibilityState: 'visible' },
+    currentUser: account,
+    currentVoiceRoom: null,
+    __isSyncingVoice: false,
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: () => new Promise((resolve) => pending.push(resolve))
+  };
+  const voiceSync = vm.runInNewContext('(' + voiceSource + ')', voiceContext);
+  const inFlight = voiceSync();
+  assert.equal(pending.length, 1, 'a real account named Guest must still publish/read voice presence');
+  voiceContext.currentUser = { name: 'Гость', isAuthenticated: false };
+  pending[0]({ ok: false });
+  await inFlight;
+
+  const syncStart = html.indexOf('async function syncAllData() {');
+  const syncEnd = html.indexOf('\n    let __isSyncingVoice', syncStart);
+  assert.ok(syncStart >= 0 && syncEnd > syncStart, 'account sync function must exist');
+  const accountSyncSource = html.slice(syncStart, syncEnd);
+  let requests = 0;
+  const accountContext = {
+    document: { visibilityState: 'visible' },
+    __isSyncingAllData: false,
+    currentUser: account,
+    myFriends: [],
+    pendingInvites: [],
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: async () => { requests += 1; return { ok: false }; },
+    safeSet: () => {},
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    friendsHubView: { style: { display: 'none' } },
+    renderFriendsHub: () => {},
+    console: { warn: () => {} }
+  };
+  const accountSync = vm.runInNewContext('(' + accountSyncSource + ')', accountContext);
+  await accountSync();
+  assert.equal(requests, 2, 'a real account named Guest must sync friends and invites');
+  assert.equal(accountContext.__isSyncingAllData, false);
+});
+
 test('voice sync network failures release the lock so the next heartbeat can retry', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function syncVoiceAndMembers() {');
-  const end = html.indexOf('\\n    // ======================================', start);
+  const end = html.indexOf('\n    // ======================================', start);
   assert.ok(start >= 0 && end > start, 'voice sync function must exist');
   const source = html.slice(start, end);
   let requests = 0;
   const context = {
     document: { visibilityState: 'visible' },
-    currentUser: { name: 'alice', status: 'В сети', game: null },
+    currentUser: { name: 'alice', status: 'В сети', game: null, isAuthenticated: true },
     currentVoiceRoom: null,
     __isSyncingVoice: false,
     DB_URL: 'https://database.example',
