@@ -3647,12 +3647,46 @@
 
     async function fetchWithTimeout(resource, options = {}, timeoutMs = 6500) {
       const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), timeoutMs);
+      let timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const clearTimeoutOnce = () => {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      };
+
       try {
         const response = await fetch(resource, { ...options, signal: controller.signal });
+        // fetch() resolves when headers arrive, not when the response body has been read.
+        // Keep the abort deadline active until a caller consumes the body so a stalled
+        // response.json()/text() cannot hold account, presence, or signaling locks forever.
+        ["arrayBuffer", "blob", "formData", "json", "text"].forEach(method => {
+          if (!response || typeof response[method] !== "function") return;
+          const originalReader = response[method].bind(response);
+          try {
+            Object.defineProperty(response, method, {
+              configurable: true,
+              value: (...args) => {
+                let bodyPromise;
+                try {
+                  bodyPromise = originalReader(...args);
+                } catch (error) {
+                  clearTimeoutOnce();
+                  throw error;
+                }
+                return Promise.resolve(bodyPromise).finally(clearTimeoutOnce);
+              }
+            });
+          } catch (_wrapError) {
+            // Keep the abort timer active; the underlying Fetch response still receives abort().
+          }
+        });
+
+        if (!response || response.body === null) clearTimeoutOnce();
         return response;
-      } finally {
-        clearTimeout(id);
+      } catch (error) {
+        clearTimeoutOnce();
+        throw error;
       }
     }
 
