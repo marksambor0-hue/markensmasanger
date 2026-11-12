@@ -5119,14 +5119,17 @@
 
     async function retryPendingChatMessages(channelKey) {
       const key = String(channelKey || "");
-      if (!key || __pendingChatRetryLocks.has(key)) return;
-      const list = localChannelStore[key] || [];
+      const retryUser = currentUser;
+      const retryStore = localChannelStore;
+      if (!key || !retryUser || retryUser.isAuthenticated !== true || __pendingChatRetryLocks.has(key)) return;
+      const list = retryStore[key] || [];
       const pending = list.filter(m => m && m.id &&
         (["sending", "pending"].includes(m.deliveryState) || m.editPending === true)).slice(0, 20);
       if (!pending.length) return;
       __pendingChatRetryLocks.add(key);
       try {
         for (const queuedMessage of pending) {
+          if (currentUser !== retryUser || localChannelStore !== retryStore) return;
           let ok = false;
           try {
             if (queuedMessage.editPending === true) {
@@ -5137,7 +5140,9 @@
           } catch (error) {
             console.warn("Could not prepare queued message for delivery:", queuedMessage.id, error);
           }
-          const currentMessage = (localChannelStore[key] || []).find(m => m && m.id === queuedMessage.id);
+          // A retry started for one account must never mutate another account's live cache.
+          if (currentUser !== retryUser || localChannelStore !== retryStore) return;
+          const currentMessage = (retryStore[key] || []).find(m => m && m.id === queuedMessage.id);
           if (currentMessage) {
             if (queuedMessage.editPending === true) {
               if (ok) delete currentMessage.editPending;
@@ -5147,7 +5152,7 @@
           }
           saveLocalStore();
           if (activeChannel === key && chatActiveView.style.display === "flex") {
-            renderChatMessages(localChannelStore[key] || []);
+            renderChatMessages(retryStore[key] || []);
           }
           if (!ok) break;
         }
@@ -5158,6 +5163,9 @@
 
     async function fetchChannelMessages(chKey) {
       if (!chKey) return;
+      const fetchUser = currentUser;
+      const fetchStore = localChannelStore;
+      if (!fetchUser || fetchUser.isAuthenticated !== true) return;
       const channelLockKey = String(chKey);
       if (__channelFetchLocks.has(channelLockKey)) return;
       __channelFetchLocks.add(channelLockKey);
@@ -5165,14 +5173,17 @@
       try {
         const url = DB_URL + "/channels_v22/" + encodeURIComponent(channelLockKey) + ".json";
         const r = await fetchWithTimeout(url, { cache: "no-store" }, 9000);
+        if (currentUser !== fetchUser || localChannelStore !== fetchStore) return;
         if (!r || !r.ok) return;
         const d = await r.json();
+        // Account may change while Firebase is streaming the response body.
+        if (currentUser !== fetchUser || localChannelStore !== fetchStore) return;
         if (d && typeof d === "object" && !Array.isArray(d) && !d.error) {
           const list = Object.entries(d)
             .map(([k, v]) => (v && typeof v === "object" ? { ...v, id: k } : null))
             .filter(Boolean);
           const remoteIds = new Set(list.map(m => m.id));
-          const prevList = localChannelStore[channelLockKey] || [];
+          const prevList = fetchStore[channelLockKey] || [];
           const pendingLocal = prevList.filter(m =>
             m && m.id && (
               (["sending", "pending"].includes(m.deliveryState) && !remoteIds.has(m.id)) ||
@@ -5185,7 +5196,7 @@
           const sigNew = JSON.stringify(mergedList.map(m => [m.id, m.text, m.edited, m.reactions, m.slots, m.deliveryState, m.editPending]));
           const sigOld = JSON.stringify(prevList.map(m => [m.id, m.text, m.edited, m.reactions, m.slots, m.deliveryState, m.editPending]));
           if (sigNew !== sigOld) {
-            localChannelStore[channelLockKey] = mergedList;
+            fetchStore[channelLockKey] = mergedList;
             saveLocalStore();
             if (activeChannel === channelLockKey && chatActiveView.style.display === "flex") {
               renderChatMessages(mergedList);
