@@ -910,9 +910,10 @@ test('fresh startup never grants the creator or guest access without a saved non
 
 test('registration rejects invalid Firebase Realtime Database account keys', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  const helperMatch = html.match(/function isValidFirebaseAccountKey\(value\) \{[\s\S]*?\n    \}/);
-  assert.ok(helperMatch, 'Firebase account-key validator must exist');
-  const validate = vm.runInNewContext('(' + helperMatch[0] + ')');
+  const start = html.indexOf('function isValidFirebaseAccountKey(value) {');
+  const end = html.indexOf('\n    }', start) + 6;
+  assert.ok(start >= 0 && end > start, 'Firebase account-key validator must exist');
+  const validate = vm.runInNewContext('(' + html.slice(start, end) + ')');
 
   for (const character of ['.', '
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
@@ -1208,9 +1209,8 @@ test('voice sync network failures release the lock so the next heartbeat can ret
   const authStart = html.indexOf('async function handleAuth()');
   const authEnd = html.indexOf('btnSubmitAuth.onclick = handleAuth', authStart);
   assert.ok(authStart >= 0 && authEnd > authStart, 'authentication handler must exist');
-  assert.match(html.slice(authStart, authEnd), /if \(!isValidFirebaseAccountKey\(cleanLogin\)\)/);
+  assert.ok(html.slice(authStart, authEnd).includes('if (!isValidFirebaseAccountKey(cleanLogin))'));
 });
-
 test('login and registration fail closed when Firebase is unavailable or account state is invalid', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function handleAuth()');
