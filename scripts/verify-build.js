@@ -914,7 +914,6 @@ test('registration rejects invalid Firebase Realtime Database account keys', () 
   const end = html.indexOf('\n    }', start) + 6;
   assert.ok(start >= 0 && end > start, 'Firebase account-key validator must exist');
   const validate = vm.runInNewContext('(' + html.slice(start, end) + ')');
-
   for (const character of ['.', '
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function handleAuth()');
@@ -1194,21 +1193,19 @@ test('voice sync network failures release the lock so the next heartbeat can ret
   if (failures > 0) process.exitCode = 1;
 })();
 , '#', '[', ']', '/']) {
-    assert.equal(validate('alex' + character + 'test'), false, 'must reject Firebase-forbidden key character ' + character);
+    assert.equal(validate('alex' + character + 'test'), false);
   }
   for (const code of [0, 1, 31, 127]) {
-    assert.equal(validate('alex' + String.fromCharCode(code) + 'test'), false, 'must reject ASCII control character ' + code);
+    assert.equal(validate('alex' + String.fromCharCode(code) + 'test'), false);
   }
-  assert.equal(validate(String.fromCharCode(0xD800)), false, 'must reject malformed UTF-16 before URL encoding');
-  assert.equal(validate('a'.repeat(33)), false, 'must preserve the 32-character account-name limit');
-
+  assert.equal(validate(String.fromCharCode(0xD800)), false);
+  assert.equal(validate('a'.repeat(33)), false);
   for (const valid of ['alex', 'Alex', 'Алексей', 'user_name', 'user-name', 'user+tag', '100%']) {
-    assert.equal(validate(valid), true, 'must preserve valid account name ' + valid);
+    assert.equal(validate(valid), true);
   }
-
   const authStart = html.indexOf('async function handleAuth()');
   const authEnd = html.indexOf('btnSubmitAuth.onclick = handleAuth', authStart);
-  assert.ok(authStart >= 0 && authEnd > authStart, 'authentication handler must exist');
+  assert.ok(authStart >= 0 && authEnd > authStart);
   assert.ok(html.slice(authStart, authEnd).includes('if (!isValidFirebaseAccountKey(cleanLogin))'));
 });
 test('login and registration fail closed when Firebase is unavailable or account state is invalid', () => {
