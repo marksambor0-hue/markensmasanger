@@ -3599,7 +3599,7 @@
     function isValidFirebaseAccountKey(value) {
       if (typeof value !== "string" || !value || value.length > 32) return false;
       // Realtime Database keys cannot contain these path/key characters or ASCII controls.
-      if (/[.#$\\[\\]\\/\\u0000-\\u001F\\u007F]/.test(value)) return false;
+      if (/[.#$\[\]\/\u0000-\u001F\u007F]/.test(value)) return false;
       // encodeURIComponent throws on lone UTF-16 surrogates; reject before building a REST URL.
       try {
         encodeURIComponent(value);
