@@ -71,6 +71,65 @@ test('preload exposed version fallback matches the packaged app version', () => 
   assert.equal(normalizeVersionTag(fallback[1]), normalizeVersionTag(pkg.version));
 });
 
+test('fetchWithTimeout keeps its abort deadline active while a response body is stalled', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function fetchWithTimeout(');
+  const end = html.indexOf('\n    let __lastFriendReqTs', start);
+  assert.ok(start >= 0 && end > start, 'fetchWithTimeout helper must exist');
+  const source = html.slice(start, end);
+  let requestSignal = null;
+  const context = {
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    fetch: async (_resource, options) => {
+      requestSignal = options.signal;
+      return {
+        ok: true,
+        body: {},
+        json: () => new Promise((_resolve, reject) => {
+          const abortError = new Error('response body aborted');
+          abortError.name = 'AbortError';
+          if (requestSignal.aborted) {
+            reject(abortError);
+            return;
+          }
+          requestSignal.addEventListener('abort', () => reject(abortError), { once: true });
+        })
+      };
+    }
+  };
+  const fetcher = vm.runInNewContext('(' + source + ')', context);
+  const response = await fetcher('/slow-response.json', {}, 15);
+  assert.equal(requestSignal.aborted, false, 'the deadline must remain active after response headers arrive');
+  await assert.rejects(() => response.json(), error => error && error.name === 'AbortError');
+  assert.equal(requestSignal.aborted, true, 'a stalled body read must be aborted by the original deadline');
+});
+
+test('fetchWithTimeout clears its abort deadline after a successful response body read', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function fetchWithTimeout(');
+  const end = html.indexOf('\n    let __lastFriendReqTs', start);
+  assert.ok(start >= 0 && end > start, 'fetchWithTimeout helper must exist');
+  const source = html.slice(start, end);
+  let requestSignal = null;
+  const context = {
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    fetch: async (_resource, options) => {
+      requestSignal = options.signal;
+      return { ok: true, body: {}, json: async () => ({ received: true }) };
+    }
+  };
+  const fetcher = vm.runInNewContext('(' + source + ')', context);
+  const response = await fetcher('/quick-response.json', {}, 15);
+  const payload = await response.json();
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.deepEqual(payload, { received: true });
+  assert.equal(requestSignal.aborted, false, 'a completed body read must clear the pending abort timer');
+});
+
 test('Electron permissions require the exact local app entry page', () => {
   const { pathToFileURL } = require('node:url');
   const appUrl = pathToFileURL(path.join(root, 'index.html')).href;
