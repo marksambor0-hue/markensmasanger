@@ -3596,6 +3596,19 @@
     window.encryptDmPayload = encryptDmPayload;
     window.decryptDmPayload = decryptDmPayload;
 
+    function isValidFirebaseAccountKey(value) {
+      if (typeof value !== "string" || !value || value.length > 32) return false;
+      // Realtime Database keys cannot contain these path/key characters or ASCII controls.
+      if (/[.#$\\[\\]\\/\\u0000-\\u001F\\u007F]/.test(value)) return false;
+      // encodeURIComponent throws on lone UTF-16 surrogates; reject before building a REST URL.
+      try {
+        encodeURIComponent(value);
+        return true;
+      } catch (_encodingError) {
+        return false;
+      }
+    }
+
     // Detect homoglyph/spoofing attempts against Creator 'markens'
     function isSpoofingCreatorName(nick) {
       if (!nick) return false;
@@ -3982,6 +3995,10 @@
       const cleanLogin = rawLogin.replace(/[<>]/g, "").trim();
       if (!cleanLogin || cleanLogin.length > 32) {
         authErrMsg.textContent = "Некорректное имя пользователя (1–32 символа)";
+        return;
+      }
+      if (!isValidFirebaseAccountKey(cleanLogin)) {
+        authErrMsg.textContent = "Имя пользователя содержит недопустимые символы. Уберите . $ # [ ] / и управляющие символы.";
         return;
       }
       if (isSpoofingCreatorName(cleanLogin)) {
