@@ -1129,6 +1129,134 @@ test('failed chat edits and sends are retained and retried without unhandled pro
 });
 
 
+test('chat history fetch cannot write a previous account response into the next account cache', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function fetchChannelMessages(chKey) {');
+  const end = html.indexOf('addWinListener("online"', start);
+  assert.ok(start >= 0 && end > start, 'fetchChannelMessages must exist');
+  const source = html.slice(start, end).trim();
+  const alice = { name: 'alice', isAuthenticated: true };
+  const bob = { name: 'bob', isAuthenticated: true };
+  const channel = 'dm_alice_bob';
+  const aliceStore = { [channel]: [] };
+  const bobStore = { [channel]: [] };
+  let resolveBody;
+  let bodyReadStarted;
+  const bodyStarted = new Promise(resolve => { bodyReadStarted = resolve; });
+  let saveCalls = 0;
+  const context = {
+    currentUser: alice,
+    localChannelStore: aliceStore,
+    __channelFetchLocks: new Set(),
+    DB_URL: 'https://database.example',
+    retryPendingChatMessages: () => {},
+    fetchWithTimeout: async () => ({
+      ok: true,
+      json: () => {
+        bodyReadStarted();
+        return new Promise(resolve => { resolveBody = resolve; });
+      }
+    }),
+    activeChannel: channel,
+    chatActiveView: { style: { display: 'none' } },
+    saveLocalStore: () => { saveCalls += 1; },
+    renderChatMessages: () => {},
+    console: { warn: () => {} }
+  };
+  const fetchMessages = vm.runInNewContext('(' + source + ')', context);
+  const inFlight = fetchMessages(channel);
+  await bodyStarted;
+
+  context.currentUser = bob;
+  context.localChannelStore = bobStore;
+  resolveBody({ aliceMessage: { sender: 'alice', text: 'private message', ts: 1 } });
+  await inFlight;
+
+  assert.deepEqual(bobStore[channel], [], 'Alice history must not be merged into Bob local storage');
+  assert.equal(saveCalls, 0, 'a stale response must not persist the next account cache');
+  assert.equal(context.__channelFetchLocks.has(channel), false, 'stale fetch must release its channel lock');
+});
+
+test('chat history fetch still merges messages for the same authenticated account', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function fetchChannelMessages(chKey) {');
+  const end = html.indexOf('addWinListener("online"', start);
+  assert.ok(start >= 0 && end > start, 'fetchChannelMessages must exist');
+  const source = html.slice(start, end).trim();
+  const alice = { name: 'alice', isAuthenticated: true };
+  const channel = 'dm_alice_bob';
+  const store = { [channel]: [] };
+  let saveCalls = 0;
+  const context = {
+    currentUser: alice,
+    localChannelStore: store,
+    __channelFetchLocks: new Set(),
+    DB_URL: 'https://database.example',
+    retryPendingChatMessages: () => {},
+    fetchWithTimeout: async () => ({
+      ok: true,
+      json: async () => ({ aliceMessage: { sender: 'alice', text: 'hello', ts: 1 } })
+    }),
+    activeChannel: channel,
+    chatActiveView: { style: { display: 'none' } },
+    saveLocalStore: () => { saveCalls += 1; },
+    renderChatMessages: () => {},
+    console: { warn: () => {} }
+  };
+  const fetchMessages = vm.runInNewContext('(' + source + ')', context);
+  await fetchMessages(channel);
+
+  assert.equal(store[channel].length, 1, 'current account history should still merge');
+  assert.equal(store[channel][0].text, 'hello');
+  assert.equal(saveCalls, 1);
+  assert.equal(context.__channelFetchLocks.has(channel), false);
+});
+
+test('pending message retry cannot update another account cache after an account switch', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function retryPendingChatMessages(channelKey) {');
+  const end = html.indexOf('async function fetchChannelMessages', start);
+  assert.ok(start >= 0 && end > start, 'retryPendingChatMessages must exist');
+  const source = html.slice(start, end).trim();
+  const alice = { name: 'alice', isAuthenticated: true };
+  const bob = { name: 'bob', isAuthenticated: true };
+  const channel = 'dm_alice_bob';
+  const aliceStore = { [channel]: [{ id: 'same-id', deliveryState: 'pending', text: 'Alice draft' }] };
+  const bobStore = { [channel]: [{ id: 'same-id', deliveryState: 'pending', text: 'Bob draft' }] };
+  let resolveWrite;
+  let retryStartedResolve;
+  const retryStarted = new Promise(resolve => { retryStartedResolve = resolve; });
+  let saveCalls = 0;
+  let renderCalls = 0;
+  const context = {
+    currentUser: alice,
+    localChannelStore: aliceStore,
+    __pendingChatRetryLocks: new Set(),
+    writeChatMessageToCloud: () => {
+      retryStartedResolve();
+      return new Promise(resolve => { resolveWrite = resolve; });
+    },
+    activeChannel: channel,
+    chatActiveView: { style: { display: 'flex' } },
+    saveLocalStore: () => { saveCalls += 1; },
+    renderChatMessages: () => { renderCalls += 1; },
+    console: { warn: () => {} }
+  };
+  const retryMessages = vm.runInNewContext('(' + source + ')', context);
+  const inFlight = retryMessages(channel);
+  await retryStarted;
+
+  context.currentUser = bob;
+  context.localChannelStore = bobStore;
+  resolveWrite(true);
+  await inFlight;
+
+  assert.equal(bobStore[channel][0].deliveryState, 'pending', 'Alice retry must not mark Bob message as sent');
+  assert.equal(saveCalls, 0, 'stale retry must not persist Bob local cache');
+  assert.equal(renderCalls, 0, 'stale retry must not render Bob chat state');
+  assert.equal(context.__pendingChatRetryLocks.has(channel), false, 'stale retry must release its lock');
+});
+
 test('voice sync never publishes a Guest presence before authentication', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function syncVoiceAndMembers() {');
