@@ -5178,6 +5178,7 @@
       return sent;
     }
 
+    const __channelFetchLocks = new Set();
     const __pendingChatRetryLocks = new Set();
 
     async function writeChatMessageToCloud(channelKey, msgObj, isDm) {

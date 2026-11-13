@@ -1305,6 +1305,14 @@ test('failed chat edits and sends are retained and retried without unhandled pro
 });
 
 
+test('chat history fetch lock is declared in the live renderer before channel fetches', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const lockIndex = html.indexOf('const __channelFetchLocks = new Set();');
+  const fetchIndex = html.indexOf('async function fetchChannelMessages(chKey) {');
+  assert.ok(lockIndex >= 0, 'the live renderer must initialize the chat history fetch lock');
+  assert.ok(fetchIndex > lockIndex, 'the lock must be initialized before the fetch function is called');
+});
+
 test('chat history fetch cannot write a previous account response into the next account cache', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function fetchChannelMessages(chKey) {');
