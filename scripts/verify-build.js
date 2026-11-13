@@ -1379,6 +1379,168 @@ test('voice sync network failures release the lock so the next heartbeat can ret
   assert.equal(context.__isSyncingVoice, false, 'retry must also release the lock');
 });
 
+
+test('friend request rejection does not create a phantom local friend or claim success', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function sendFriendRequest() {');
+  const end = html.indexOf('document.getElementById("btnSendFriendReq").onclick = sendFriendRequest;', start);
+  assert.ok(start >= 0 && end > start, 'sendFriendRequest must exist');
+  const source = html.slice(start, end).trim();
+  const input = { value: 'bob' };
+  const feedback = { style: {}, textContent: '' };
+  const friends = [];
+  let saves = 0;
+  let renders = 0;
+  let requests = 0;
+  const context = {
+    document: { getElementById: id => id === 'inpFriendNick' ? input : feedback },
+    currentUser: { name: 'alice', isAuthenticated: true },
+    myFriends: friends,
+    __lastFriendReqTs: 0,
+    DB_URL: 'https://database.example',
+    isValidFirebaseAccountKey: () => true,
+    fetchWithTimeout: async () => { requests += 1; return { ok: false, status: 403 }; },
+    getAccountScopedStorageKey: key => key + '::alice',
+    safeSet: () => { saves += 1; },
+    renderFriendsHub: () => { renders += 1; }
+  };
+  const send = vm.runInNewContext('(' + source + ')', context);
+  await send();
+
+  assert.equal(requests, 1, 'the rejected request must stop before the friend-list write');
+  assert.deepEqual(friends, [], 'a rejected cloud write must not add a local friend');
+  assert.equal(saves, 0, 'a rejected cloud write must not persist a phantom friend');
+  assert.equal(renders, 0, 'a failed request must not render a success state');
+  assert.equal(input.value, 'bob', 'keep the input so the user can retry');
+  assert.match(feedback.textContent, /Не удалось отправить запрос/);
+  assert.equal(feedback.style.color, 'var(--red)');
+});
+
+test('friend request is not cached until both Firebase writes succeed', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function sendFriendRequest() {');
+  const end = html.indexOf('document.getElementById("btnSendFriendReq").onclick = sendFriendRequest;', start);
+  assert.ok(start >= 0 && end > start, 'sendFriendRequest must exist');
+  const source = html.slice(start, end).trim();
+  const input = { value: 'bob' };
+  const feedback = { style: {}, textContent: '' };
+  const friends = [];
+  const calls = [];
+  let saves = 0;
+  const context = {
+    document: { getElementById: id => id === 'inpFriendNick' ? input : feedback },
+    currentUser: { name: 'alice', isAuthenticated: true },
+    myFriends: friends,
+    __lastFriendReqTs: 0,
+    DB_URL: 'https://database.example',
+    isValidFirebaseAccountKey: () => true,
+    fetchWithTimeout: async (url, options) => {
+      calls.push({ url, options });
+      return calls.length === 1 ? { ok: true, status: 200 } : { ok: false, status: 500 };
+    },
+    getAccountScopedStorageKey: key => key + '::alice',
+    safeSet: () => { saves += 1; },
+    renderFriendsHub: () => {}
+  };
+  const send = vm.runInNewContext('(' + source + ')', context);
+  await send();
+
+  assert.equal(calls.length, 2, 'both cloud writes should be attempted');
+  assert.match(calls[0].url, /friend_requests_v24\/bob\/alice\.json$/);
+  assert.match(calls[1].url, /friends_v22\/alice\/bob\.json$/);
+  assert.deepEqual(friends, [], 'do not cache a friend if the second cloud write failed');
+  assert.equal(saves, 0);
+  assert.equal(input.value, 'bob');
+  assert.match(feedback.textContent, /не удалось синхронизировать/);
+  assert.equal(feedback.style.color, 'var(--red)');
+});
+
+test('friend request is added locally only after both Firebase writes succeed', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function sendFriendRequest() {');
+  const end = html.indexOf('document.getElementById("btnSendFriendReq").onclick = sendFriendRequest;', start);
+  assert.ok(start >= 0 && end > start, 'sendFriendRequest must exist');
+  const source = html.slice(start, end).trim();
+  const input = { value: 'bob' };
+  const feedback = { style: {}, textContent: '' };
+  const friends = [];
+  const saves = [];
+  let renders = 0;
+  const calls = [];
+  const context = {
+    document: { getElementById: id => id === 'inpFriendNick' ? input : feedback },
+    currentUser: { name: 'alice', isAuthenticated: true },
+    myFriends: friends,
+    __lastFriendReqTs: 0,
+    DB_URL: 'https://database.example',
+    isValidFirebaseAccountKey: () => true,
+    fetchWithTimeout: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, status: 200 };
+    },
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    safeSet: (key, value) => saves.push({ key, value }),
+    renderFriendsHub: () => { renders += 1; }
+  };
+  const send = vm.runInNewContext('(' + source + ')', context);
+  await send();
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(friends, ['bob']);
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].key, 'markens_friends_clean::alice');
+  assert.equal(JSON.parse(saves[0].value)[0], 'bob');
+  assert.equal(input.value, '');
+  assert.match(feedback.textContent, /Запрос дружбы отправлен игроку bob/);
+  assert.equal(feedback.style.color, 'var(--green)');
+  assert.equal(renders, 1);
+});
+
+test('friend request finishing after an account switch never writes into the new account cache', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('async function sendFriendRequest() {');
+  const end = html.indexOf('document.getElementById("btnSendFriendReq").onclick = sendFriendRequest;', start);
+  assert.ok(start >= 0 && end > start, 'sendFriendRequest must exist');
+  const source = html.slice(start, end).trim();
+  const input = { value: 'bob' };
+  const feedback = { style: {}, textContent: '' };
+  const alice = { name: 'alice', isAuthenticated: true };
+  const bob = { name: 'charlie', isAuthenticated: true };
+  const bobFriends = [];
+  let resolveFirst;
+  const calls = [];
+  let saves = 0;
+  const context = {
+    document: { getElementById: id => id === 'inpFriendNick' ? input : feedback },
+    currentUser: alice,
+    myFriends: [],
+    __lastFriendReqTs: 0,
+    DB_URL: 'https://database.example',
+    isValidFirebaseAccountKey: () => true,
+    fetchWithTimeout: (url, options) => {
+      calls.push({ url, options });
+      if (calls.length === 1) return new Promise(resolve => { resolveFirst = resolve; });
+      return Promise.resolve({ ok: true, status: 200 });
+    },
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    safeSet: () => { saves += 1; },
+    renderFriendsHub: () => {}
+  };
+  const send = vm.runInNewContext('(' + source + ')', context);
+  const inFlight = send();
+  assert.equal(calls.length, 1, 'the first write should start immediately');
+
+  context.currentUser = bob;
+  context.myFriends = bobFriends;
+  resolveFirst({ ok: true, status: 200 });
+  await inFlight;
+
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(call => call.url.includes('/alice/')), 'both cloud writes must retain the initiating account path');
+  assert.deepEqual(bobFriends, [], 'the new account must not receive the previous account friend');
+  assert.equal(saves, 0, 'the new account cache must not be persisted');
+});
+
 (async () => {
   let failures = 0;
   for (const item of tests) {
