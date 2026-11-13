@@ -1542,6 +1542,204 @@ test('friend request finishing after an account switch never writes into the new
   assert.equal(saves, 0, 'the new account cache must not be persisted');
 });
 
+
+test('accepting a friend invite keeps it pending when Firebase rejects the friend write', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function showFriendInviteActionError(message) {');
+  const end = html.indexOf('function renderFriendsHub() {', start);
+  assert.ok(start >= 0 && end > start, 'friend invite action helpers must exist');
+  const source = html.slice(start, end);
+  const feedback = { style: {}, textContent: '' };
+  const invites = [{ from: 'bob' }];
+  const friends = [];
+  const saves = [];
+  let renders = 0;
+  let opens = 0;
+  let requests = 0;
+  const context = {
+    document: { getElementById: () => feedback },
+    currentUser: { name: 'alice', isAuthenticated: true },
+    pendingInvites: invites,
+    myFriends: friends,
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: async () => { requests += 1; return { ok: false, status: 403 }; },
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    safeSet: (key, value) => saves.push({ key, value }),
+    renderFriendsHub: () => { renders += 1; },
+    openDmWithFriend: () => { opens += 1; }
+  };
+  const helpers = vm.runInNewContext(source + '\n({ acceptFriendInvite, declineFriendInvite })', context);
+  const result = await helpers.acceptFriendInvite('bob');
+
+  assert.equal(result, false);
+  assert.equal(requests, 1);
+  assert.deepEqual(invites, [{ from: 'bob' }]);
+  assert.deepEqual(friends, []);
+  assert.equal(saves.length, 0);
+  assert.equal(renders, 0);
+  assert.equal(opens, 0);
+  assert.match(feedback.textContent, /Запрос оставлен в списке/);
+});
+
+test('accepting a friend invite updates local state only after both Firebase writes succeed', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function showFriendInviteActionError(message) {');
+  const end = html.indexOf('function renderFriendsHub() {', start);
+  assert.ok(start >= 0 && end > start, 'friend invite action helpers must exist');
+  const source = html.slice(start, end);
+  const feedback = { style: {}, textContent: '' };
+  const invites = [{ from: 'bob' }, { from: 'carol' }];
+  const friends = ['dave'];
+  const saves = [];
+  const calls = [];
+  let renders = 0;
+  let opened = '';
+  const context = {
+    document: { getElementById: () => feedback },
+    currentUser: { name: 'alice', isAuthenticated: true },
+    pendingInvites: invites,
+    myFriends: friends,
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: async (url, options) => { calls.push({ url, options }); return { ok: true, status: 200 }; },
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    safeSet: (key, value) => saves.push({ key, value }),
+    renderFriendsHub: () => { renders += 1; },
+    openDmWithFriend: name => { opened = name; }
+  };
+  const helpers = vm.runInNewContext(source + '\n({ acceptFriendInvite, declineFriendInvite })', context);
+  const result = await helpers.acceptFriendInvite('bob');
+
+  assert.equal(result, true);
+  assert.equal(calls.length, 2);
+  assert.ok(calls[0].url.endsWith('/friends_v22/alice/bob.json'));
+  assert.ok(calls[1].url.endsWith('/friend_requests_v24/alice/bob.json'));
+  assert.deepEqual(context.pendingInvites, [{ from: 'carol' }]);
+  assert.deepEqual(context.myFriends, ['dave', 'bob']);
+  assert.equal(saves.length, 2);
+  assert.equal(saves[0].key, 'markens_invites_clean::alice');
+  assert.equal(saves[1].key, 'markens_friends_clean::alice');
+  assert.equal(renders, 1);
+  assert.equal(opened, 'bob');
+});
+
+test('declining a friend invite keeps it visible when Firebase rejects deletion', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function showFriendInviteActionError(message) {');
+  const end = html.indexOf('function renderFriendsHub() {', start);
+  assert.ok(start >= 0 && end > start, 'friend invite action helpers must exist');
+  const source = html.slice(start, end);
+  const feedback = { style: {}, textContent: '' };
+  const invites = [{ from: 'bob' }];
+  const saves = [];
+  let renders = 0;
+  const context = {
+    document: { getElementById: () => feedback },
+    currentUser: { name: 'alice', isAuthenticated: true },
+    pendingInvites: invites,
+    myFriends: [],
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: async () => ({ ok: false, status: 403 }),
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    safeSet: (key, value) => saves.push({ key, value }),
+    renderFriendsHub: () => { renders += 1; },
+    openDmWithFriend: () => {}
+  };
+  const helpers = vm.runInNewContext(source + '\n({ acceptFriendInvite, declineFriendInvite })', context);
+  const result = await helpers.declineFriendInvite('bob');
+
+  assert.equal(result, false);
+  assert.deepEqual(context.pendingInvites, [{ from: 'bob' }]);
+  assert.equal(saves.length, 0);
+  assert.equal(renders, 0);
+  assert.match(feedback.textContent, /Запрос оставлен в списке/);
+});
+
+test('declining a friend invite removes it locally only after Firebase confirms deletion', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function showFriendInviteActionError(message) {');
+  const end = html.indexOf('function renderFriendsHub() {', start);
+  assert.ok(start >= 0 && end > start, 'friend invite action helpers must exist');
+  const source = html.slice(start, end);
+  const invites = [{ from: 'bob' }, { from: 'carol' }];
+  const saves = [];
+  let renders = 0;
+  const context = {
+    document: { getElementById: () => ({ style: {}, textContent: '' }) },
+    currentUser: { name: 'alice', isAuthenticated: true },
+    pendingInvites: invites,
+    myFriends: [],
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: async (url, options) => {
+      assert.ok(url.endsWith('/friend_requests_v24/alice/bob.json'));
+      assert.equal(options.method, 'DELETE');
+      return { ok: true, status: 200 };
+    },
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    safeSet: (key, value) => saves.push({ key, value }),
+    renderFriendsHub: () => { renders += 1; },
+    openDmWithFriend: () => {}
+  };
+  const helpers = vm.runInNewContext(source + '\n({ acceptFriendInvite, declineFriendInvite })', context);
+  const result = await helpers.declineFriendInvite('bob');
+
+  assert.equal(result, true);
+  assert.deepEqual(context.pendingInvites, [{ from: 'carol' }]);
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].key, 'markens_invites_clean::alice');
+  assert.equal(JSON.parse(saves[0].value)[0].from, 'carol');
+  assert.equal(renders, 1);
+});
+
+test('accepting a friend invite after an account switch persists only to the initiating account namespace', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function showFriendInviteActionError(message) {');
+  const end = html.indexOf('function renderFriendsHub() {', start);
+  assert.ok(start >= 0 && end > start, 'friend invite action helpers must exist');
+  const source = html.slice(start, end);
+  const alice = { name: 'alice', isAuthenticated: true };
+  const bob = { name: 'bob', isAuthenticated: true };
+  const bobInvites = [{ from: 'eve' }];
+  const bobFriends = ['frank'];
+  const saves = [];
+  const calls = [];
+  let resolveFirst;
+  let renders = 0;
+  let opens = 0;
+  const context = {
+    document: { getElementById: () => ({ style: {}, textContent: '' }) },
+    currentUser: alice,
+    pendingInvites: [{ from: 'carol' }],
+    myFriends: ['dave'],
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: (url, options) => {
+      calls.push({ url, options });
+      return calls.length === 1 ? new Promise(resolve => { resolveFirst = resolve; }) : Promise.resolve({ ok: true, status: 200 });
+    },
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    safeSet: (key, value) => saves.push({ key, value }),
+    renderFriendsHub: () => { renders += 1; },
+    openDmWithFriend: () => { opens += 1; }
+  };
+  const helpers = vm.runInNewContext(source + '\n({ acceptFriendInvite, declineFriendInvite })', context);
+  const inFlight = helpers.acceptFriendInvite('bob');
+  assert.equal(calls.length, 1);
+
+  context.currentUser = bob;
+  context.pendingInvites = bobInvites;
+  context.myFriends = bobFriends;
+  resolveFirst({ ok: true, status: 200 });
+  const result = await inFlight;
+
+  assert.equal(result, true);
+  assert.ok(calls[0].url.endsWith('/friends_v22/alice/bob.json'));
+  assert.ok(calls[1].url.endsWith('/friend_requests_v24/alice/bob.json'));
+  assert.deepEqual(bobInvites, [{ from: 'eve' }]);
+  assert.deepEqual(bobFriends, ['frank']);
+  assert.deepEqual(saves.map(item => item.key), ['markens_invites_clean::alice', 'markens_friends_clean::alice']);
+  assert.equal(renders, 0);
+  assert.equal(opens, 0);
+});
+
 (async () => {
   let failures = 0;
   for (const item of tests) {
