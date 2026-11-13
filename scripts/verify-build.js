@@ -784,6 +784,101 @@ test('account sync times out stalled network reads and can retry on the next cyc
   assert.equal(context.__isSyncingAllData, false, 'a successful retry must also release the sync lock');
 });
 
+test('account sync rejects an old A session response after logging out and back into the same account', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const syncStart = html.indexOf('async function syncAllData() {');
+  const syncEnd = html.indexOf("\\n    let __isSyncingVoice", syncStart);
+  assert.ok(syncStart >= 0 && syncEnd > syncStart, 'account sync function must exist');
+  const syncSource = html.slice(syncStart, syncEnd);
+  const firstSession = { name: 'alice', isAuthenticated: true };
+  const secondSession = { name: 'alice', isAuthenticated: true };
+  const secondFriends = ['existing-friend'];
+  const secondInvites = [{ from: 'existing-invite' }];
+  const writes = [];
+  const context = {
+    document: { visibilityState: 'visible' },
+    currentUser: firstSession,
+    myFriends: [],
+    pendingInvites: [],
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: async () => ({
+      ok: true,
+      json: async () => {
+        // Simulate logout/login of the same username while the response body is being read.
+        context.currentUser = secondSession;
+        context.myFriends = secondFriends;
+        context.pendingInvites = secondInvites;
+        return { staleFriend: true };
+      }
+    }),
+    safeSet: (...args) => writes.push(args),
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    friendsHubView: { style: { display: 'none' } },
+    renderFriendsHub: () => { throw new Error('an old session must not render'); },
+    console: { warn: () => {} }
+  };
+  const sync = vm.runInNewContext('(' + syncSource + ')', context);
+  await sync();
+
+  assert.deepEqual(secondFriends, ['existing-friend'], 'same-name re-login must not receive the old session friends');
+  assert.deepEqual(secondInvites, [{ from: 'existing-invite' }], 'same-name re-login must not receive old session invites');
+  assert.equal(writes.length, 0, 'the stale session must not persist into the new session cache');
+  assert.equal(context.__isSyncingAllData, false, 'the per-session lock must be released');
+});
+
+test('account sync allows a new account to sync while another account request is pending', async () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const syncStart = html.indexOf('async function syncAllData() {');
+  const syncEnd = html.indexOf("\\n    let __isSyncingVoice", syncStart);
+  assert.ok(syncStart >= 0 && syncEnd > syncStart, 'account sync function must exist');
+  const syncSource = html.slice(syncStart, syncEnd);
+  const alice = { name: 'alice', isAuthenticated: true };
+  const bob = { name: 'bob', isAuthenticated: true };
+  const bobFriends = [];
+  const bobInvites = [];
+  const writes = [];
+  const calls = [];
+  let resolveAliceRequest;
+  const context = {
+    document: { visibilityState: 'visible' },
+    currentUser: alice,
+    myFriends: [],
+    pendingInvites: [],
+    DB_URL: 'https://database.example',
+    fetchWithTimeout: url => {
+      calls.push(url);
+      if (calls.length === 1) return new Promise(resolve => { resolveAliceRequest = resolve; });
+      if (calls.length === 2) return Promise.resolve({ ok: true, json: async () => ({ carol: true }) });
+      return Promise.resolve({ ok: true, json: async () => null });
+    },
+    safeSet: (...args) => writes.push(args),
+    getAccountScopedStorageKey: (key, username) => key + '::' + username,
+    friendsHubView: { style: { display: 'none' } },
+    renderFriendsHub: () => {},
+    console: { warn: () => {} }
+  };
+  const sync = vm.runInNewContext('(' + syncSource + ')', context);
+  const aliceSync = sync();
+  assert.equal(calls.length, 1, 'Alice sync must start its first request');
+
+  await sync();
+  assert.equal(calls.length, 1, 'a duplicate sync for the same session must remain coalesced');
+
+  context.currentUser = bob;
+  context.myFriends = bobFriends;
+  context.pendingInvites = bobInvites;
+  await sync();
+  assert.equal(calls.length, 3, 'Bob must not wait for Alice’s stalled request');
+  assert.deepEqual(bobFriends, ['carol']);
+  assert.ok(writes.some(([key]) => key === 'markens_friends_clean::bob'));
+
+  resolveAliceRequest({ ok: true, json: async () => ({ mallory: true }) });
+  await aliceSync;
+  assert.deepEqual(bobFriends, ['carol'], 'Alice’s late response must not mutate Bob’s cache');
+  assert.ok(!writes.some(([key]) => key.endsWith('::alice')), 'the stale request must not persist under another active session');
+  assert.equal(context.__isSyncingAllData, false, 'all per-session locks must be released');
+});
+
 test('cross-device profile sync ignores stale responses after switching accounts', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const syncStart = html.indexOf('function getCrossDeviceProfileUrl(username)');
