@@ -81,7 +81,7 @@ test('Electron main-process version fallbacks match the packaged app version', (
   assert.equal(normalizeVersionTag(updaterFallback[1]), normalizeVersionTag(pkg.version));
 });
 
-test('release version bump synchronizes preload and Electron main-process fallbacks', () => {
+test('Windows release version bump synchronizes every runtime version marker', async () => {
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/build-windows.yml'), 'utf8');
   const workflowLines = workflow.split(/\r?\n/);
   const markerIndex = workflowLines.findIndex(line => line.trim() === 'script: |');
