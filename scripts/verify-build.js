@@ -73,8 +73,8 @@ test('preload exposed version fallback matches the packaged app version', () => 
 
 test('Electron main-process version fallbacks match the packaged app version', () => {
   const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
-  const bundledFallback = main.match(/return ['"]v(\\d+\\.\\d+\\.\\d+)['"]\\s*;/);
-  const updaterFallback = main.match(/normalizeVersionTag\\(options\\.currentVersion \\|\\| BUNDLED_VERSION\\) \\|\\| ['"]v(\\d+\\.\\d+\\.\\d+)['"]/);
+  const bundledFallback = main.match(/return ['"]v(\d+\.\d+\.\d+)['"]\s*;/);
+  const updaterFallback = main.match(/normalizeVersionTag\(options\.currentVersion \|\| BUNDLED_VERSION\) \|\| ['"]v(\d+\.\d+\.\d+)['"]/);
   assert.ok(bundledFallback, 'main.js must define a safe bundled-version fallback');
   assert.ok(updaterFallback, 'main.js must define a safe updater-version fallback');
   assert.equal(normalizeVersionTag(bundledFallback[1]), normalizeVersionTag(pkg.version));
