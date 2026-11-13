@@ -3337,9 +3337,9 @@
     // =========================================================================
     // ULTRA-RELIABLE ZERO-TOUCH AUTO-DEPLOY, ABORT-CONTROLLER & BOOTLOADER (v25.8)
     // =========================================================================
-        const CURRENT_SCRIPT_VERSION = "v31.0";
-    const CURRENT_SCRIPT_TS = 1793000800000;
-    const CURRENT_SCRIPT_CHANGELOG = "Глобальное обновление v31.0: студийный голосовой движок WebRTC Mesh + Opus HD 128 kbps (компрессор, фильтр гула 85 Гц, усиление до 200%, выбор динамиков, авто-переподключение ICE), сквозное шифрование личных сообщений E2EE, защита паролей аккаунтов и кастомные роли VORTEX";
+        const CURRENT_SCRIPT_VERSION = "v31.10.16";
+    const CURRENT_SCRIPT_TS = 1794400001000;
+    const CURRENT_SCRIPT_CHANGELOG = "MARKENS v31.10.16: исправления авторизации и разделения данных аккаунтов, надёжности доставки сообщений и восстановления WebRTC-звонков";
 
     window.MARKENS_BUILD_VERSION = CURRENT_SCRIPT_VERSION;
     window.MARKENS_BUILD_TS = CURRENT_SCRIPT_TS;
@@ -3477,7 +3477,12 @@
         window.__markensPersistStore[k] = strVal;
         syncPersistToWindowName();
       }
-      try { localStorage.setItem(k, strVal); } catch (e) {}
+      try {
+        localStorage.setItem(k, strVal);
+        return true;
+      } catch (e) {
+        return false;
+      }
     }
     function safeRemove(k) {
       if (window.__markensPersistStore) {
@@ -3485,6 +3490,19 @@
         syncPersistToWindowName();
       }
       try { localStorage.removeItem(k); } catch (e) {}
+    }
+
+    function safeParseStoredJson(key, fallbackValue) {
+      const raw = safeGet(key);
+      if (typeof raw !== "string" || !raw.trim()) return fallbackValue;
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed === null || parsed === undefined ? fallbackValue : parsed;
+      } catch (error) {
+        console.warn("Discarding corrupted local MARKENS data:", key, error);
+        safeRemove(key);
+        return fallbackValue;
+      }
     }
 
     // =========================================================================
@@ -3578,6 +3596,19 @@
     window.encryptDmPayload = encryptDmPayload;
     window.decryptDmPayload = decryptDmPayload;
 
+    function isValidFirebaseAccountKey(value) {
+      if (typeof value !== "string" || !value || value.length > 32) return false;
+      // Realtime Database keys cannot contain these path/key characters or ASCII controls.
+      if (/[.#$\[\]\/\u0000-\u001F\u007F]/.test(value)) return false;
+      // encodeURIComponent throws on lone UTF-16 surrogates; reject before building a REST URL.
+      try {
+        encodeURIComponent(value);
+        return true;
+      } catch (_encodingError) {
+        return false;
+      }
+    }
+
     // Detect homoglyph/spoofing attempts against Creator 'markens'
     function isSpoofingCreatorName(nick) {
       if (!nick) return false;
@@ -3605,18 +3636,60 @@
       return /^(https?:\/\/|data:image\/|data:video\/|data:audio\/|blob:)/i.test(trimmed);
     }
 
+    function isSafeAvatarUrl(url) {
+      if (typeof url !== "string") return false;
+      const value = url.trim();
+      if (/^data:image\/svg\+xml/i.test(value)) return false;
+      return /^https?:\/\//i.test(value) ||
+        /^blob:/i.test(value) ||
+        /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(value);
+    }
+
     async function fetchWithTimeout(resource, options = {}, timeoutMs = 6500) {
       const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), timeoutMs);
+      let timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const clearTimeoutOnce = () => {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      };
+
       try {
         const response = await fetch(resource, { ...options, signal: controller.signal });
+        // fetch() resolves when headers arrive, not when the response body has been read.
+        // Keep the abort deadline active until a caller consumes the body so a stalled
+        // response.json()/text() cannot hold account, presence, or signaling locks forever.
+        ["arrayBuffer", "blob", "formData", "json", "text"].forEach(method => {
+          if (!response || typeof response[method] !== "function") return;
+          const originalReader = response[method].bind(response);
+          try {
+            Object.defineProperty(response, method, {
+              configurable: true,
+              value: (...args) => {
+                let bodyPromise;
+                try {
+                  bodyPromise = originalReader(...args);
+                } catch (error) {
+                  clearTimeoutOnce();
+                  throw error;
+                }
+                return Promise.resolve(bodyPromise).finally(clearTimeoutOnce);
+              }
+            });
+          } catch (_wrapError) {
+            // Keep the abort timer active; the underlying Fetch response still receives abort().
+          }
+        });
+
+        if (!response || response.body === null) clearTimeoutOnce();
         return response;
-      } finally {
-        clearTimeout(id);
+      } catch (error) {
+        clearTimeoutOnce();
+        throw error;
       }
     }
 
-    let __lastMsgSentTs = 0;
     let __lastFriendReqTs = 0;
 
     window.escapeHtml = escapeHtml;
@@ -3625,7 +3698,7 @@
     window.computeOtaReleaseSignature = computeOtaReleaseSignature;
     window.verifyCreatorPrivilege = verifyCreatorPrivilege;
 
-    let currentUser = { name: "markens", isOwner: true, joinedVortex: true, status: "В сети", game: null, avatar: null };
+    let currentUser = { name: "Гость", isAuthenticated: false, isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
     let isRegMode = false;
     let activeChannel = "основной-чат";
     let activeChannelTitle = "основной-чат";
@@ -3637,7 +3710,35 @@
     let ctxTargetMsgId = null;
     let ctxTargetMsgObj = null;
 
-    let localChannelStore = JSON.parse(safeGet("markens_msgs_clean", "{}"));
+    function getAccountScopedStorageKey(baseKey, username) {
+      let identity = typeof username === "string" ? username.trim() : "";
+      if (!identity && typeof currentUser !== "undefined" && currentUser && typeof currentUser.name === "string") {
+        identity = currentUser.name.trim();
+      }
+      // Keep existing keys for already-normalized names, but distinguish compatibility
+      // and decomposed Unicode spellings that NFKC would otherwise collapse.
+      let safeIdentity = "guest";
+      if (identity) {
+        const exactIdentity = identity.split("").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("");
+        try {
+          const normalizedIdentity = identity.normalize("NFKC");
+          safeIdentity = encodeURIComponent(normalizedIdentity);
+          if (identity !== normalizedIdentity) safeIdentity += "%u" + exactIdentity;
+        } catch (_identityError) {
+          // Preserve even malformed UTF-16 without letting key generation crash the app.
+          safeIdentity = "%u" + exactIdentity;
+        }
+      }
+      return baseKey + "::" + safeIdentity;
+    }
+
+    const savedChannelStore = safeParseStoredJson(getAccountScopedStorageKey("markens_msgs_clean"), {});
+    let localChannelStore = (savedChannelStore && typeof savedChannelStore === "object" && !Array.isArray(savedChannelStore))
+      ? Object.assign(Object.create(null), savedChannelStore)
+      : Object.create(null);
+    for (const key of Object.keys(localChannelStore)) {
+      if (!Array.isArray(localChannelStore[key])) localChannelStore[key] = [];
+    }
     if (!localChannelStore["патчноуты-игр-steam"] || !localChannelStore["патчноуты-игр-steam"].length || localChannelStore["патчноуты-игр-steam"].length <= 5) {
       localChannelStore["патчноуты-игр-steam"] = [
         {
@@ -3685,23 +3786,77 @@
       ];
     }
     function saveLocalStore() {
-      try {
-        safeSet("markens_msgs_clean", JSON.stringify(localChannelStore));
-      } catch (e) {
-        // If localStorage is full from video data, keep only recent text messages
-        console.warn("Storage quota exceeded, preserving recent chat cache:", e);
+      let serialized = "";
+      try { serialized = JSON.stringify(localChannelStore); }
+      catch (error) {
+        console.error("Could not serialize MARKENS chat cache:", error);
+        return false;
       }
+      if (safeSet(getAccountScopedStorageKey("markens_msgs_clean"), serialized)) return true;
+
+      // Quota fallback: compact only the persisted snapshot. Keep the live in-memory
+      // messages and every unsent/edited message untouched.
+      const compact = Object.create(null);
+      for (const [channelKey, messages] of Object.entries(localChannelStore)) {
+        if (!Array.isArray(messages)) continue;
+        const pending = messages.filter(m => m && (["sending", "pending"].includes(m.deliveryState) || m.editPending === true));
+        const sent = messages.filter(m => m && !pending.includes(m));
+        const recentSent = sent.slice(-80).map(m => {
+          const copy = { ...m };
+          if (copy.mediaUrl) copy.mediaUrl = "";
+          if (copy.audioUrl) copy.audioUrl = "";
+          return copy;
+        });
+        compact[channelKey] = [...recentSent, ...pending]
+          .sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+      }
+      try {
+        const compactJson = JSON.stringify(compact);
+        if (safeSet(getAccountScopedStorageKey("markens_msgs_clean"), compactJson)) {
+          console.warn("MARKENS chat cache compacted after storage quota was reached; pending messages were preserved.");
+          return true;
+        }
+      } catch (error) {
+        console.error("Could not compact MARKENS chat cache:", error);
+      }
+      console.error("MARKENS chat cache could not be persisted; current messages remain available until the app closes.");
+      return false;
     }
 
-    let myFriends = JSON.parse(safeGet("markens_friends_clean", "[]"));
-    let pendingInvites = JSON.parse(safeGet("markens_invites_clean", "[]"));
+    let myFriends = safeParseStoredJson(getAccountScopedStorageKey("markens_friends_clean"), []);
+    let pendingInvites = safeParseStoredJson(getAccountScopedStorageKey("markens_invites_clean"), []);
+    myFriends = Array.isArray(myFriends)
+      ? Array.from(new Set(myFriends.filter(name => typeof name === "string" && name.trim()).map(name => name.trim().slice(0, 64))))
+      : [];
+    pendingInvites = Array.isArray(pendingInvites)
+      ? pendingInvites.filter(invite => invite && typeof invite.from === "string" && invite.from.trim())
+      : [];
+
+    function activateAccountStorage(username) {
+      const scopedMessages = safeParseStoredJson(getAccountScopedStorageKey("markens_msgs_clean", username), {});
+      localChannelStore = scopedMessages && typeof scopedMessages === "object" && !Array.isArray(scopedMessages)
+        ? Object.assign(Object.create(null), scopedMessages)
+        : Object.create(null);
+      for (const key of Object.keys(localChannelStore)) {
+        if (!Array.isArray(localChannelStore[key])) localChannelStore[key] = [];
+      }
+      myFriends = safeParseStoredJson(getAccountScopedStorageKey("markens_friends_clean", username), []);
+      pendingInvites = safeParseStoredJson(getAccountScopedStorageKey("markens_invites_clean", username), []);
+      myFriends = Array.isArray(myFriends)
+        ? Array.from(new Set(myFriends.filter(name => typeof name === "string" && name.trim()).map(name => name.trim().slice(0, 64))))
+        : [];
+      pendingInvites = Array.isArray(pendingInvites)
+        ? pendingInvites.filter(invite => invite && typeof invite.from === "string" && invite.from.trim())
+        : [];
+    }
+
     window.livePresenceMap = {};
 
     function getPresenceEntry(username) {
       if (!username) return null;
       const target = username.toLowerCase();
       for (const [k, v] of Object.entries(window.livePresenceMap || {})) {
-        if (k.toLowerCase() === target || (v && v.user && v.user.toLowerCase() === target)) {
+        if (k.toLowerCase() === target || (v && typeof v.user === "string" && v.user.toLowerCase() === target)) {
           return v;
         }
       }
@@ -3830,9 +3985,35 @@
       return null;
     }
 
+    async function createAccountIfAbsent(accountUrl, accountPayload, etag) {
+      // Firebase REST ETags provide an atomic compare-and-set for account creation.
+      // A missing ETag must fail closed: a plain PUT could overwrite another user's account.
+      if (typeof etag !== "string" || !etag.trim()) {
+        throw new Error("Missing Firebase ETag; refusing an unsafe account write");
+      }
+
+      const response = await fetchWithTimeout(accountUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "if-match": etag
+        },
+        body: JSON.stringify(accountPayload)
+      }, 8000);
+
+      if (response && response.status === 412) {
+        return { created: false, conflict: true };
+      }
+      if (!response || !response.ok) {
+        throw new Error("Conditional account creation failed");
+      }
+      return { created: true, conflict: false };
+    }
+
     async function handleAuth() {
       const rawLogin = inpAuthLogin.value.trim();
       const pass = inpAuthPass.value.trim();
+      const authMode = isRegMode;
       authErrMsg.textContent = "";
       if (!rawLogin) {
         authErrMsg.textContent = "Введите имя пользователя";
@@ -3844,102 +4025,134 @@
         inpAuthPass.focus();
         return;
       }
+
       const cleanLogin = rawLogin.replace(/[<>]/g, "").trim();
       if (!cleanLogin || cleanLogin.length > 32) {
         authErrMsg.textContent = "Некорректное имя пользователя (1–32 символа)";
+        return;
+      }
+      if (!isValidFirebaseAccountKey(cleanLogin)) {
+        authErrMsg.textContent = "Имя пользователя содержит недопустимые символы. Уберите . $ # [ ] / и управляющие символы.";
         return;
       }
       if (isSpoofingCreatorName(cleanLogin)) {
         authErrMsg.textContent = "🛡️ Защита безопасности: этот ник зарезервирован Создателем markens";
         return;
       }
-      const passHash = hashUserPassword(cleanLogin, pass);
+
       const isCreatorLogin = cleanLogin.toLowerCase() === "markens";
-
-      if (isCreatorLogin) {
-        currentUser = {
-          name: "markens",
-          isOwner: true,
-          joinedVortex: true,
-          vortexAccepted_v25: true,
-          status: "В сети",
-          game: null,
-          avatar: null
-        };
-      } else {
-        const vortexAccepted = safeGet("vortex_accepted_v25_" + cleanLogin.toLowerCase()) === "1";
-        currentUser = {
-          name: cleanLogin,
-          isOwner: false,
-          joinedVortex: vortexAccepted,
-          vortexAccepted_v25: vortexAccepted,
-          status: "В сети",
-          game: null,
-          avatar: null
-        };
+      if (isCreatorLogin && authMode) {
+        authErrMsg.textContent = "Аккаунт Создателя нельзя зарегистрировать через обычную форму.";
+        return;
       }
+      // Creator account path is canonical even if the user types MARKENS/Markens.
+      const accountLogin = isCreatorLogin ? "markens" : cleanLogin;
+      const passHash = hashUserPassword(accountLogin, pass);
 
-      // Защита от перебора паролей (Rate-Limit)
-      const nowAuthTs = Date.now();
-      if (window.__authLockoutUntil && nowAuthTs < window.__authLockoutUntil) {
-        const waitSec = Math.ceil((window.__authLockoutUntil - nowAuthTs) / 1000);
+      if (window.__authLockoutUntil && Date.now() < window.__authLockoutUntil) {
+        const waitSec = Math.ceil((window.__authLockoutUntil - Date.now()) / 1000);
         authErrMsg.textContent = `Слишком много попыток. Подождите ${waitSec} сек.`;
         return;
       }
 
-      // 1. Проверяем пароль по базе Firebase (с коротким таймаутом 2.5с, чтобы оффлайн/тесты не зависали)
+      // Authentication is fail-closed: no local/guest fallback when Firebase is offline.
+      let existingAcc;
+      let accountEtag = null;
+      const accountUrl = `${DB_URL}/accounts/${encodeURIComponent(accountLogin)}.json`;
       try {
-        const accRes = await fetchWithTimeout(`${DB_URL}/accounts/${encodeURIComponent(cleanLogin)}.json`, {}, 2500);
-        if (accRes && accRes.ok) {
-          const existingAcc = await accRes.json();
-          if (existingAcc && typeof existingAcc === "object" && existingAcc.passwordHash) {
-            if (existingAcc.passwordHash !== passHash) {
-              window.__failedAuthCount = (window.__failedAuthCount || 0) + 1;
-              if (window.__failedAuthCount >= 5) {
-                window.__authLockoutUntil = Date.now() + 15000;
-                window.__failedAuthCount = 0;
-              }
-              authErrMsg.textContent = isRegMode
-                ? "Этот никнейм уже занят другим пользователем (неверный пароль)"
-                : "Неверный пароль от аккаунта";
-              return;
-            }
-          }
+        const accRes = await fetchWithTimeout(accountUrl, {
+          cache: "no-store",
+          headers: authMode ? { "X-Firebase-ETag": "true" } : {}
+        }, 8000);
+        if (!accRes || !accRes.ok) throw new Error("Authentication server unavailable");
+        if (authMode && accRes.headers && typeof accRes.headers.get === "function") {
+          accountEtag = accRes.headers.get("ETag");
         }
+        existingAcc = await accRes.json();
       } catch (_netErr) {
-        // Если сеть недоступна, продолжаем локальный вход
+        authErrMsg.textContent = "Не удалось проверить аккаунт. Проверьте интернет и попробуйте ещё раз.";
+        return;
       }
-      window.__failedAuthCount = 0;
 
-      // 2. Успешный вход / регистрация
+      if (authMode) {
+        if (existingAcc !== null && existingAcc !== undefined) {
+          authErrMsg.textContent = "Этот никнейм уже занят.";
+          return;
+        }
+      } else {
+        if (!existingAcc || typeof existingAcc !== "object" || typeof existingAcc.passwordHash !== "string") {
+          authErrMsg.textContent = "Аккаунт не найден. Переключитесь на регистрацию.";
+          return;
+        }
+        if (existingAcc.passwordHash !== passHash) {
+          window.__failedAuthCount = (window.__failedAuthCount || 0) + 1;
+          if (window.__failedAuthCount >= 5) {
+            window.__authLockoutUntil = Date.now() + 30000;
+            window.__failedAuthCount = 0;
+          }
+          authErrMsg.textContent = "Неверный логин или пароль.";
+          return;
+        }
+      }
+
+      const vortexAccepted = isCreatorLogin
+        ? true
+        : safeGet(getAccountScopedStorageKey("vortex_accepted_v25", accountLogin)) === "1";
+      const authenticatedUser = {
+        name: accountLogin,
+        isAuthenticated: true,
+        isOwner: isCreatorLogin,
+        joinedVortex: vortexAccepted,
+        vortexAccepted_v25: vortexAccepted,
+        status: "В сети",
+        game: null,
+        avatar: null
+      };
+
+      // The initial availability read is not enough: another client may register the same
+      // name before this write. Firebase's ETag condition makes this PUT atomic.
+      if (authMode) {
+        try {
+          const createResult = await createAccountIfAbsent(accountUrl, {
+            name: accountLogin,
+            passwordHash: passHash,
+            vortexAccepted_v25: !!authenticatedUser.vortexAccepted_v25,
+            status: "В сети",
+            online: Date.now()
+          }, accountEtag);
+          if (createResult.conflict) {
+            authErrMsg.textContent = "Этот никнейм уже занят. Выберите другой.";
+            return;
+          }
+        } catch (_createErr) {
+          authErrMsg.textContent = "Не удалось безопасно создать аккаунт на сервере. Проверьте интернет и попробуйте ещё раз.";
+          return;
+        }
+      } else {
+        // Presence metadata only; never rewrite the stored password during login.
+        fetchWithTimeout(accountUrl, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "В сети", online: Date.now() })
+        }, 8000).catch(() => {});
+      }
+
+      window.__failedAuthCount = 0;
+      currentUser = authenticatedUser;
+      activateAccountStorage(accountLogin);
       saveSessionPermanently(currentUser);
       authModal.style.display = "none";
       showFriendsHub();
       applyUserUI();
 
-      if (!currentUser.isOwner && !currentUser.vortexAccepted_v25 && safeGet("vortex_dismissed_v25_" + currentUser.name.toLowerCase()) !== "1") {
+      if (!currentUser.isOwner && !currentUser.vortexAccepted_v25 && safeGet(getAccountScopedStorageKey("vortex_dismissed_v25", currentUser.name)) !== "1") {
         const invMod = document.getElementById("vortexInviteModal");
         if (invMod) invMod.style.display = "flex";
       }
 
-      // 3. Сохраняем крипто-хеш пароля и статус в Firebase
-      (async () => {
-        try {
-          await fetch(`${DB_URL}/accounts/${encodeURIComponent(cleanLogin)}.json`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: cleanLogin,
-              passwordHash: passHash,
-              vortexAccepted_v25: !!currentUser.vortexAccepted_v25,
-              status: "В сети",
-              online: Date.now()
-            })
-          });
-        } catch (e) {}
-        syncAllData();
-        pullCrossDeviceProfileFromCloud();
-      })();
+      syncAllData();
+      pullCrossDeviceProfileFromCloud();
+      restoreUiStateAfterUpdate();
     }
     btnSubmitAuth.onclick = handleAuth;
     inpAuthLogin.addEventListener("keydown", (e) => {
@@ -3959,16 +4172,13 @@
     function applyUserUI() {
       updateMicButtonUI();
       updateDeafenButtonUI();
-      if (currentUser.name.toLowerCase() === "markens") {
-        currentUser.isOwner = true;
-        currentUser.joinedVortex = true;
-      }
-      const isOwn = !!currentUser.isOwner;
+      // Never infer creator privileges from a username alone.
+      const isOwn = !!currentUser.isOwner && currentUser.name.toLowerCase() === "markens";
 
       document.getElementById("dockName").textContent = isOwn ? `👑 ${currentUser.name}` : currentUser.name;
       document.getElementById("rpName").innerHTML = isOwn
-        ? `${currentUser.name} <span class="owner-tag" style="margin-left:4px;">Создатель</span>`
-        : currentUser.name;
+        ? `${escapeHtml(currentUser.name)} <span class="owner-tag" style="margin-left:4px;">Создатель</span>`
+        : escapeHtml(currentUser.name);
       document.getElementById("rpRole").textContent = isOwn ? "Владелец мессенджера и сервера VORTEX" : "В сети";
       const rpGameSec = document.getElementById("rpGameSection");
       if (currentUser.game && currentUser.game !== "NONE" && currentUser.game !== "Нет игры") {
@@ -3981,9 +4191,10 @@
       const stCls = (currentUser.status === "Не активен") ? "idle" : ((currentUser.status === "Не беспокоить") ? "dnd" : ((currentUser.status === "Невидимка") ? "offline" : ""));
       const dockAv = document.getElementById("dockAvatar");
       const rpAv = document.getElementById("rpAvatar");
-      if (currentUser.avatar && isSafeMediaUrl(currentUser.avatar)) {
-        if (dockAv) dockAv.innerHTML = `<img src="${currentUser.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot ${stCls}" id="dockStatusDot"></span>`;
-        if (rpAv) rpAv.innerHTML = `<img src="${currentUser.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot ${stCls}"></span>`;
+      if (currentUser.avatar && isSafeAvatarUrl(currentUser.avatar)) {
+        const safeAvatarUrl = escapeHtml(currentUser.avatar.trim());
+        if (dockAv) dockAv.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot ${stCls}" id="dockStatusDot"></span>`;
+        if (rpAv) rpAv.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot ${stCls}"></span>`;
       } else {
         if (dockAv) dockAv.innerHTML = `<span class="av-letter">${letter}</span><span class="status-dot ${stCls}" id="dockStatusDot"></span>`;
         if (rpAv) rpAv.innerHTML = `<span class="av-letter">${letter}</span><span class="status-dot ${stCls}"></span>`;
@@ -4002,10 +4213,10 @@
       if (adminTab) adminTab.style.display = isOwn ? "flex" : "none";
 
       // Server VORTEX visibility & explicit invite prompt for regular users
-      const hasJoined = isOwn || !!currentUser.vortexAccepted_v25 || safeGet("vortex_accepted_v25_" + currentUser.name.toLowerCase()) === "1";
+      const hasJoined = isOwn || !!currentUser.vortexAccepted_v25 || safeGet(getAccountScopedStorageKey("vortex_accepted_v25", currentUser.name)) === "1";
       currentUser.joinedVortex = hasJoined;
       currentUser.vortexAccepted_v25 = hasJoined;
-      const dismissed = safeGet("vortex_dismissed_v25_" + currentUser.name.toLowerCase()) === "1";
+      const dismissed = safeGet(getAccountScopedStorageKey("vortex_dismissed_v25", currentUser.name)) === "1";
       document.getElementById("guildBtnVortex").style.display = hasJoined ? "flex" : "none";
       document.getElementById("serverInviteBanner").style.display = (!hasJoined && !dismissed) ? "flex" : "none";
       const leaveSrvBtn = document.getElementById("btnLeaveVortexServer");
@@ -4015,31 +4226,28 @@
     const btnQuickEnt = document.getElementById("btnQuickEnterMarkens");
     if (btnQuickEnt) {
       btnQuickEnt.onclick = () => {
-        const typedNick = inpAuthLogin.value.trim();
-        if (typedNick) {
-          if (!inpAuthPass.value.trim()) inpAuthPass.value = "12345";
-          handleAuth();
-        } else {
-          authModal.style.display = "none";
-          applyUserUI();
-          showFriendsHub();
-        }
+        authErrMsg.textContent = "Для безопасного входа введите имя пользователя и пароль.";
+        inpAuthLogin.focus();
       };
     }
 
     try {
-      const saved = loadSavedSession();
-      if (saved && saved.name) {
-        currentUser = saved;
-        if (currentUser.name.toLowerCase() !== "markens") {
-          currentUser.isOwner = false;
-          currentUser.vortexAccepted_v25 = safeGet("vortex_accepted_v25_" + currentUser.name.toLowerCase()) === "1";
-          currentUser.joinedVortex = currentUser.vortexAccepted_v25;
-        }
+      // A localStorage/cookie profile is not an authentication credential: it can be
+      // edited or copied between Windows users. Never auto-login from this object.
+      // Keep the last login as a convenience hint only; the server password check is
+      // required on every fresh app start until a real server-issued auth token exists.
+      const savedHint = loadSavedSession();
+      if (savedHint && typeof savedHint.name === "string" && savedHint.name.trim() && savedHint.name.toLowerCase() !== "markens") {
+        inpAuthLogin.value = savedHint.name.trim().slice(0, 32);
       }
-      authModal.style.display = "none";
+      currentUser = { name: "Гость", isAuthenticated: false, isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+      authModal.style.display = "flex";
       applyUserUI();
-    } catch (e) { console.error("Startup init error:", e); }
+    } catch (e) {
+      console.error("Startup init error:", e);
+      currentUser = { name: "Гость", isAuthenticated: false, isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+      authModal.style.display = "flex";
+    }
 
     // NAVIGATION FLOW
     const guildBtnDM = document.getElementById("guildBtnDM");
@@ -4159,7 +4367,7 @@
     async function acceptVortexInvite() {
       currentUser.joinedVortex = true;
       currentUser.vortexAccepted_v25 = true;
-      safeSet("vortex_accepted_v25_" + currentUser.name.toLowerCase(), "1");
+      safeSet(getAccountScopedStorageKey("vortex_accepted_v25", currentUser.name), "1");
       saveSessionPermanently(currentUser);
       const invMod = document.getElementById("vortexInviteModal");
       if (invMod) invMod.style.display = "none";
@@ -4173,7 +4381,7 @@
     }
 
     function declineVortexInvite() {
-      safeSet("vortex_dismissed_v25_" + currentUser.name.toLowerCase(), "1");
+      safeSet(getAccountScopedStorageKey("vortex_dismissed_v25", currentUser.name), "1");
       document.getElementById("serverInviteBanner").style.display = "none";
       const invMod = document.getElementById("vortexInviteModal");
       if (invMod) invMod.style.display = "none";
@@ -4192,8 +4400,8 @@
       btnLeaveSrv.onclick = async () => {
         currentUser.joinedVortex = false;
         currentUser.vortexAccepted_v25 = false;
-        safeRemove("vortex_accepted_v25_" + currentUser.name.toLowerCase());
-        safeRemove("vortex_dismissed_v25_" + currentUser.name.toLowerCase());
+        safeRemove(getAccountScopedStorageKey("vortex_accepted_v25", currentUser.name));
+        safeRemove(getAccountScopedStorageKey("vortex_dismissed_v25", currentUser.name));
         saveSessionPermanently(currentUser);
         applyUserUI();
         showFriendsHub();
@@ -4231,14 +4439,14 @@
       fetch(`${DB_URL}/channels_v22/${encodeURIComponent(activeChannel)}.json`, { method: "DELETE" }).catch(() => {});
     };
     document.getElementById("btnAdminCreateRoom").onclick = () => {
-      const rName = document.getElementById("inpNewRoomName").value.trim();
+      const rName = document.getElementById("inpNewRoomName").value.trim().slice(0, 64);
       if (!rName) return;
       document.getElementById("inpNewRoomName").value = "";
       const rId = "room_" + Date.now();
       const scroller = document.querySelector("#sidebarModeServer .sidebar-scroller");
       const row = document.createElement("div");
       row.className = "nav-row vc-row";
-      row.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/></svg><span>${rName}</span>`;
+      row.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/></svg><span>${escapeHtml(rName)}</span>`;
       const tree = document.createElement("div");
       tree.className = "vc-tree";
       tree.id = "tree_" + rId;
@@ -4246,7 +4454,7 @@
         playSound("join");
         document.getElementById("rtcPanel").style.display = "flex";
         document.getElementById("rtcRoomLabel").textContent = "VORTEX / " + rName;
-        tree.innerHTML = `<div class="vc-user"><div class="vc-av">${currentUser.name.charAt(0).toUpperCase()}</div><span>${currentUser.name}</span></div>`;
+        tree.innerHTML = `<div class="vc-user"><div class="vc-av">${escapeHtml(currentUser.name.charAt(0).toUpperCase())}</div><span>${escapeHtml(currentUser.name)}</span></div>`;
       };
       scroller.appendChild(row);
       scroller.appendChild(tree);
@@ -4257,10 +4465,16 @@
     // FRIENDS HUB ENGINE (With Real-Time Online / Offline Status Everywhere)
     function ensureSidebarDmRow(friendNick) {
       const list = document.getElementById("dmSidebarList");
-      let existing = list.querySelector(`[data-friend="${friendNick.toLowerCase()}"]`);
-      const stCls = getFriendStatusClass(friendNick);
+      if (typeof friendNick !== "string" || !friendNick.trim()) return null;
+      friendNick = friendNick.trim().slice(0, 64);
+      let existing = Array.from(list.querySelectorAll(".dm-row[data-friendname]"))
+        .find(row => (row.getAttribute("data-friendname") || "").toLowerCase() === friendNick.toLowerCase()) || null;
+      const stClsRaw = getFriendStatusClass(friendNick);
+      const stCls = ["offline", "idle", "dnd"].includes(stClsRaw) ? stClsRaw : "";
       const subTxt = getFriendSubText(friendNick);
       const isOn = isFriendTrulyOnline(friendNick);
+      const safeFriendName = escapeHtml(friendNick);
+      const safeSubText = escapeHtml(String(subTxt || "").slice(0, 120));
 
       if (!existing) {
         existing = document.createElement("div");
@@ -4270,16 +4484,16 @@
         existing.style.opacity = isOn ? "1" : "0.65";
         const isMarkensFriend = friendNick.toLowerCase() === "markens";
         const nameMarkup = isMarkensFriend
-          ? `👑 ${friendNick} <span class="vortex-rank-pill rank-creator-overlord" style="margin-left:4px;font-size:0.62rem;">Создатель</span>`
-          : friendNick;
+          ? `👑 ${safeFriendName} <span class="vortex-rank-pill rank-creator-overlord" style="margin-left:4px;font-size:0.62rem;">Создатель</span>`
+          : safeFriendName;
         existing.innerHTML = `
           <div class="avatar-32">
-            <span>${friendNick.charAt(0).toUpperCase()}</span>
+            <span>${escapeHtml(friendNick.charAt(0).toUpperCase())}</span>
             <span class="status-dot ${stCls}"></span>
           </div>
           <div class="dm-row-text">
             <div class="dm-row-name">${nameMarkup}</div>
-            <div class="dm-row-sub">${subTxt}</div>
+            <div class="dm-row-sub">${safeSubText}</div>
           </div>
         `;
         existing.onclick = () => {
@@ -4294,7 +4508,7 @@
         const dot = existing.querySelector(".status-dot");
         if (dot) dot.className = "status-dot" + (stCls ? " " + stCls : "");
         const sub = existing.querySelector(".dm-row-sub");
-        if (sub) sub.textContent = subTxt;
+        if (sub) sub.textContent = String(subTxt || "").slice(0, 120);
       }
       return existing;
     }
@@ -4320,6 +4534,94 @@
       row.click();
     }
 
+    function showFriendInviteActionError(message) {
+      const feedback = document.getElementById("friendReqFeedback");
+      if (!feedback) return;
+      feedback.style.display = "block";
+      feedback.style.color = "var(--red)";
+      feedback.textContent = message;
+    }
+
+    async function acceptFriendInvite(friendName) {
+      const inviteName = typeof friendName === "string" ? friendName.trim().slice(0, 64) : "";
+      const inviteUser = currentUser;
+      if (!inviteName || !inviteUser || inviteUser.isAuthenticated !== true || !inviteUser.name) return false;
+
+      const accountName = inviteUser.name;
+      const invitesSnapshot = Array.isArray(pendingInvites) ? pendingInvites.slice() : [];
+      const friendsSnapshot = Array.isArray(myFriends) ? myFriends.slice() : [];
+      try {
+        const friendResponse = await fetchWithTimeout(
+          `${DB_URL}/friends_v22/${encodeURIComponent(accountName)}/${encodeURIComponent(inviteName)}.json`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: inviteName, ts: Date.now() })
+          },
+          8000
+        );
+        if (!friendResponse || !friendResponse.ok) throw new Error("Friend relationship write was rejected");
+
+        const requestResponse = await fetchWithTimeout(
+          `${DB_URL}/friend_requests_v24/${encodeURIComponent(accountName)}/${encodeURIComponent(inviteName)}.json`,
+          { method: "DELETE" },
+          8000
+        );
+        if (!requestResponse || !requestResponse.ok) throw new Error("Friend request removal was rejected");
+
+        // Persist against the account that initiated the action, even if another account
+        // became active while Firebase was processing the two writes.
+        const sourceInvites = currentUser === inviteUser && Array.isArray(pendingInvites) ? pendingInvites : invitesSnapshot;
+        const sourceFriends = currentUser === inviteUser && Array.isArray(myFriends) ? myFriends : friendsSnapshot;
+        const updatedInvites = sourceInvites.filter(invite => !invite || invite.from !== inviteName);
+        const updatedFriends = sourceFriends.includes(inviteName) ? sourceFriends : [...sourceFriends, inviteName];
+        safeSet(getAccountScopedStorageKey("markens_invites_clean", accountName), JSON.stringify(updatedInvites));
+        safeSet(getAccountScopedStorageKey("markens_friends_clean", accountName), JSON.stringify(updatedFriends));
+
+        if (currentUser !== inviteUser) return true;
+        pendingInvites = updatedInvites;
+        myFriends = updatedFriends;
+        renderFriendsHub();
+        openDmWithFriend(inviteName);
+        return true;
+      } catch (_error) {
+        if (currentUser === inviteUser) {
+          showFriendInviteActionError("Не удалось принять запрос дружбы. Запрос оставлен в списке — попробуйте ещё раз.");
+        }
+        return false;
+      }
+    }
+
+    async function declineFriendInvite(friendName) {
+      const inviteName = typeof friendName === "string" ? friendName.trim().slice(0, 64) : "";
+      const inviteUser = currentUser;
+      if (!inviteName || !inviteUser || inviteUser.isAuthenticated !== true || !inviteUser.name) return false;
+
+      const accountName = inviteUser.name;
+      const invitesSnapshot = Array.isArray(pendingInvites) ? pendingInvites.slice() : [];
+      try {
+        const response = await fetchWithTimeout(
+          `${DB_URL}/friend_requests_v24/${encodeURIComponent(accountName)}/${encodeURIComponent(inviteName)}.json`,
+          { method: "DELETE" },
+          8000
+        );
+        if (!response || !response.ok) throw new Error("Friend request removal was rejected");
+
+        const sourceInvites = currentUser === inviteUser && Array.isArray(pendingInvites) ? pendingInvites : invitesSnapshot;
+        const updatedInvites = sourceInvites.filter(invite => !invite || invite.from !== inviteName);
+        safeSet(getAccountScopedStorageKey("markens_invites_clean", accountName), JSON.stringify(updatedInvites));
+        if (currentUser !== inviteUser) return true;
+        pendingInvites = updatedInvites;
+        renderFriendsHub();
+        return true;
+      } catch (_error) {
+        if (currentUser === inviteUser) {
+          showFriendInviteActionError("Не удалось отклонить запрос. Запрос оставлен в списке — попробуйте ещё раз.");
+        }
+        return false;
+      }
+    }
+
     function renderFriendsHub() {
       const pCount = pendingInvites.length;
       const railBadge = document.getElementById("railPendingBadge");
@@ -4341,14 +4643,18 @@
       const pList = document.getElementById("pendingRequestsList");
       pList.innerHTML = "";
       pendingInvites.forEach(inv => {
-        const invStCls = getFriendStatusClass(inv.from);
+        if (!inv || typeof inv.from !== "string" || !inv.from.trim()) return;
+        const inviteName = inv.from.trim().slice(0, 64);
+        const safeInviteName = escapeHtml(inviteName);
+        const invStRaw = getFriendStatusClass(inviteName);
+        const invStCls = ["offline", "idle", "dnd"].includes(invStRaw) ? invStRaw : "";
         const item = document.createElement("div");
         item.className = "friend-list-item";
         item.innerHTML = `
           <div class="friend-item-left">
-            <div class="avatar-32"><span>${inv.from.charAt(0).toUpperCase()}</span><span class="status-dot ${invStCls}"></span></div>
+            <div class="avatar-32"><span>${escapeHtml(inviteName.charAt(0).toUpperCase())}</span><span class="status-dot ${invStCls}"></span></div>
             <div>
-              <div style="font-weight:700;color:var(--text-header);font-size:0.94rem;">${inv.from}</div>
+              <div style="font-weight:700;color:var(--text-header);font-size:0.94rem;">${safeInviteName}</div>
               <div style="font-size:0.78rem;color:var(--text-muted);">Входящий запрос дружбы</div>
             </div>
           </div>
@@ -4363,25 +4669,11 @@
         `;
         item.querySelector(".accept").onclick = (e) => {
           e.stopPropagation();
-          pendingInvites = pendingInvites.filter(x => x.from !== inv.from);
-          safeSet("markens_invites_clean", JSON.stringify(pendingInvites));
-          if (!myFriends.includes(inv.from)) {
-            myFriends.push(inv.from);
-            safeSet("markens_friends_clean", JSON.stringify(myFriends));
-          }
-          fetch(`${DB_URL}/friends_v22/${encodeURIComponent(currentUser.name)}/${encodeURIComponent(inv.from)}.json`, {
-            method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: inv.from, ts: Date.now() })
-          }).catch(() => {});
-          fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(currentUser.name)}/${encodeURIComponent(inv.from)}.json`, { method: "DELETE" }).catch(() => {});
-          renderFriendsHub();
-          openDmWithFriend(inv.from);
+          acceptFriendInvite(inviteName);
         };
         item.querySelector(".decline").onclick = (e) => {
           e.stopPropagation();
-          pendingInvites = pendingInvites.filter(x => x.from !== inv.from);
-          safeSet("markens_invites_clean", JSON.stringify(pendingInvites));
-          fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(currentUser.name)}/${encodeURIComponent(inv.from)}.json`, { method: "DELETE" }).catch(() => {});
-          renderFriendsHub();
+          declineFriendInvite(inviteName);
         };
         pList.appendChild(item);
       });
@@ -4404,21 +4696,26 @@
 
       myFriends.forEach(fn => {
         const isOn = isFriendTrulyOnline(fn);
-        const stCls = getFriendStatusClass(fn);
-        const subTxt = getFriendSubText(fn);
+        if (typeof fn !== "string" || !fn.trim()) return;
+        const friendName = fn.trim().slice(0, 64);
+        const safeFriendName = escapeHtml(friendName);
+        const stClsRaw = getFriendStatusClass(friendName);
+        const stCls = ["offline", "idle", "dnd"].includes(stClsRaw) ? stClsRaw : "";
+        const subTxt = getFriendSubText(friendName);
+        const safeSubText = escapeHtml(String(subTxt || "").slice(0, 120));
         const row = document.createElement("div");
         row.className = "friend-list-item";
         row.style.opacity = isOn ? "1" : "0.68";
-        const isMarkensFriend = fn.toLowerCase() === "markens";
+        const isMarkensFriend = friendName.toLowerCase() === "markens";
         const nameMarkup = isMarkensFriend
-          ? `👑 ${fn} <span class="vortex-rank-pill rank-creator-overlord" style="margin-left:6px;font-size:0.65rem;">Создатель</span>`
-          : fn;
+          ? `👑 ${safeFriendName} <span class="vortex-rank-pill rank-creator-overlord" style="margin-left:6px;font-size:0.65rem;">Создатель</span>`
+          : safeFriendName;
         row.innerHTML = `
           <div class="friend-item-left">
-            <div class="avatar-32"><span>${fn.charAt(0).toUpperCase()}</span><span class="status-dot ${stCls}"></span></div>
+            <div class="avatar-32"><span>${escapeHtml(friendName.charAt(0).toUpperCase())}</span><span class="status-dot ${stCls}"></span></div>
             <div>
               <div style="font-weight:700;color:var(--text-header);font-size:0.95rem;">${nameMarkup}</div>
-              <div style="font-size:0.78rem;color:${isOn ? 'var(--text-muted)' : '#80848e'};">${subTxt} — Нажмите, чтобы открыть чат</div>
+              <div style="font-size:0.78rem;color:${isOn ? 'var(--text-muted)' : '#80848e'};">${safeSubText} — Нажмите, чтобы открыть чат</div>
             </div>
           </div>
           <div class="friend-item-actions">
@@ -4427,7 +4724,7 @@
             </button>
           </div>
         `;
-        row.onclick = () => openDmWithFriend(fn);
+        row.onclick = () => openDmWithFriend(friendName);
         fList.appendChild(row);
       });
     }
@@ -4435,34 +4732,83 @@
     async function sendFriendRequest() {
       const inp = document.getElementById("inpFriendNick");
       const fb = document.getElementById("friendReqFeedback");
-      const rawNick = inp.value.trim();
+      const showFeedback = (color, message) => {
+        if (!fb) return;
+        fb.style.display = "block";
+        fb.style.color = color;
+        fb.textContent = message;
+      };
+      if (!inp || !currentUser || currentUser.isAuthenticated !== true || !currentUser.name) {
+        showFeedback("var(--red)", "Войдите в аккаунт, чтобы добавлять друзей.");
+        return;
+      }
+
+      const rawNick = String(inp.value || "").trim();
       const nick = rawNick.replace(/[<>]/g, "").trim();
       if (!nick) return;
+      if (nick.length > 32 || !isValidFirebaseAccountKey(nick)) {
+        showFeedback("var(--red)", "Некорректный никнейм. Проверьте длину и допустимые символы.");
+        return;
+      }
+
+      const senderUser = currentUser;
+      const senderName = senderUser.name;
+      if (nick.toLowerCase() === senderName.toLowerCase()) {
+        showFeedback("var(--red)", "Нельзя добавить самого себя.");
+        return;
+      }
       if (Date.now() - __lastFriendReqTs < 400) return;
       __lastFriendReqTs = Date.now();
-      if (nick.toLowerCase() === currentUser.name.toLowerCase()) {
-        fb.style.display = "block"; fb.style.color = "var(--red)"; fb.textContent = "Нельзя добавить самого себя."; return;
-      }
-      inp.value = "";
-      if (!myFriends.includes(nick)) {
-        myFriends.push(nick);
-        safeSet("markens_friends_clean", JSON.stringify(myFriends));
-      }
-      fb.style.display = "block";
-      fb.style.color = "var(--green)";
-      fb.textContent = `Запрос дружбы отправлен игроку ${nick}. Друг добавлен в список!`;
-      renderFriendsHub();
 
+      let requestCreated = false;
+      showFeedback("var(--text-muted)", `Отправка запроса игроку ${nick}...`);
       try {
-        await fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(nick)}/${encodeURIComponent(currentUser.name)}.json`, {
-          method: "PUT", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ from: currentUser.name, to: nick, ts: Date.now() })
-        });
-        await fetch(`${DB_URL}/friends_v22/${encodeURIComponent(currentUser.name)}/${encodeURIComponent(nick)}.json`, {
-          method: "PUT", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: nick, ts: Date.now() })
-        });
-      } catch (e) {}
+        const requestResponse = await fetchWithTimeout(
+          `${DB_URL}/friend_requests_v24/${encodeURIComponent(nick)}/${encodeURIComponent(senderName)}.json`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ from: senderName, to: nick, ts: Date.now() })
+          },
+          8000
+        );
+        if (!requestResponse || !requestResponse.ok) {
+          throw new Error("Friend request write was rejected");
+        }
+        requestCreated = true;
+
+        const friendResponse = await fetchWithTimeout(
+          `${DB_URL}/friends_v22/${encodeURIComponent(senderName)}/${encodeURIComponent(nick)}.json`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: nick, ts: Date.now() })
+          },
+          8000
+        );
+        if (!friendResponse || !friendResponse.ok) {
+          throw new Error("Friend list write was rejected");
+        }
+
+        // A request started by one account may finish after the user switches accounts.
+        // Complete the captured account's cloud writes, but never mutate the new account's UI/cache.
+        if (currentUser !== senderUser) return;
+        if (!myFriends.includes(nick)) {
+          myFriends.push(nick);
+          safeSet(getAccountScopedStorageKey("markens_friends_clean", senderName), JSON.stringify(myFriends));
+        }
+        inp.value = "";
+        showFeedback("var(--green)", `Запрос дружбы отправлен игроку ${nick}. Друг добавлен в список!`);
+        renderFriendsHub();
+      } catch (_error) {
+        if (currentUser !== senderUser) return;
+        showFeedback(
+          "var(--red)",
+          requestCreated
+            ? "Запрос отправлен, но список друзей не удалось синхронизировать. Повторите попытку позже."
+            : "Не удалось отправить запрос дружбы. Проверьте интернет и попробуйте ещё раз."
+        );
+      }
     }
 
     document.getElementById("btnSendFriendReq").onclick = sendFriendRequest;
@@ -4470,7 +4816,8 @@
     document.getElementById("btnQuickAddDM").onclick = () => { showFriendsHub(); switchFriendsTab("add"); };
 
     // GLOBAL FEEDBACK BOARD (Accessible outside any server!)
-    let globalFeedbacks = JSON.parse(safeGet("markens_global_fb_clean", "[]"));
+    let globalFeedbacks = safeParseStoredJson("markens_global_fb_clean", []);
+    if (!Array.isArray(globalFeedbacks)) globalFeedbacks = [];
     if (!globalFeedbacks.length) {
       globalFeedbacks = [
         { id: "fb_welcome", author: "markens", isOwner: true, category: "Идея", text: "Оставляйте здесь свои идеи и пожелания по мессенджеру — раздел доступен всем пользователям сразу после входа.", votes: 1, status: "Активно", time: "Сегодня" }
@@ -4503,21 +4850,30 @@
       document.getElementById("globalFbCountLabel").textContent = `Предложения участников — ${globalFeedbacks.length}`;
 
       globalFeedbacks.forEach(item => {
+        if (!item || typeof item !== "object") return;
+        const feedbackId = typeof item.id === "string" ? item.id.slice(0, 128) : "";
+        if (!feedbackId) return;
+        const feedbackAuthor = escapeHtml(String(item.author || "Участник").slice(0, 64));
+        const feedbackCategory = escapeHtml(String(item.category || "Идея").slice(0, 40));
+        const feedbackTime = escapeHtml(String(item.time || "Сегодня").slice(0, 40));
+        const feedbackText = escapeHtml(String(item.text || "").slice(0, 3000));
+        const feedbackStatus = escapeHtml(String(item.status || "Новое").slice(0, 40));
+        const feedbackVotes = Math.max(0, Math.min(999999, Math.floor(Number(item.votes) || 1)));
         const row = document.createElement("div");
         row.style.cssText = "background:var(--bg-secondary);border:1px solid var(--divider);border-radius:8px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;";
         row.innerHTML = `
           <div style="display:flex;align-items:center;gap:12px;min-width:0;flex:1;">
-            <button class="gfb-vote" data-id="${item.id}" style="background:var(--bg-primary);border:1px solid var(--divider);color:var(--text-header);padding:6px 10px;border-radius:6px;font-size:0.8rem;font-weight:700;cursor:pointer;">▲ ${item.votes || 1}</button>
+            <button class="gfb-vote" data-id="${escapeHtml(feedbackId)}" style="background:var(--bg-primary);border:1px solid var(--divider);color:var(--text-header);padding:6px 10px;border-radius:6px;font-size:0.8rem;font-weight:700;cursor:pointer;">▲ ${feedbackVotes}</button>
             <div style="min-width:0;flex:1;">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
-                <span style="background:var(--bg-tertiary);color:var(--text-muted);font-size:0.68rem;font-weight:700;padding:2px 6px;border-radius:4px;text-transform:uppercase;">${item.category || "Идея"}</span>
-                <span style="font-weight:700;color:var(--text-header);font-size:0.88rem;">${item.author}</span>
-                <span style="font-size:0.72rem;color:var(--text-muted);">${item.time || "Сегодня"}</span>
+                <span style="background:var(--bg-tertiary);color:var(--text-muted);font-size:0.68rem;font-weight:700;padding:2px 6px;border-radius:4px;text-transform:uppercase;">${feedbackCategory}</span>
+                <span style="font-weight:700;color:var(--text-header);font-size:0.88rem;">${feedbackAuthor}</span>
+                <span style="font-size:0.72rem;color:var(--text-muted);">${feedbackTime}</span>
               </div>
-              <div style="font-size:0.92rem;color:var(--text-normal);word-break:break-word;">${(item.text || "").replace(/</g, "&lt;")}</div>
+              <div style="font-size:0.92rem;color:var(--text-normal);word-break:break-word;">${feedbackText}</div>
             </div>
           </div>
-          <span class="gfb-status" data-id="${item.id}" style="background:var(--bg-tertiary);color:var(--green);font-size:0.72rem;font-weight:700;padding:4px 9px;border-radius:4px;cursor:${currentUser.isOwner ? 'pointer' : 'default'};">${item.status || "Новое"}</span>
+          <span class="gfb-status" data-id="${escapeHtml(feedbackId)}" style="background:var(--bg-tertiary);color:var(--green);font-size:0.72rem;font-weight:700;padding:4px 9px;border-radius:4px;cursor:${currentUser.isOwner ? 'pointer' : 'default'};">${feedbackStatus}</span>
         `;
         container.appendChild(row);
       });
@@ -4583,10 +4939,10 @@
         messagesScroller.innerHTML = `
           <div style="padding:24px 16px;">
             <div style="width:64px;height:64px;border-radius:50%;background:var(--bg-secondary);display:flex;align-items:center;justify-content:center;font-size:1.8rem;font-weight:700;color:var(--text-header);margin-bottom:12px;">
-              ${isDmChat ? activeChannelTitle.charAt(0).toUpperCase() : "#"}
+              ${isDmChat ? escapeHtml(String(activeChannelTitle).charAt(0).toUpperCase()) : "#"}
             </div>
-            <h2 style="font-size:1.5rem;font-weight:800;color:var(--text-header);margin-bottom:4px;">${activeChannelTitle}</h2>
-            <p style="font-size:0.9rem;color:var(--text-muted);">Это начало истории сообщений с ${activeChannelTitle}.</p>
+            <h2 style="font-size:1.5rem;font-weight:800;color:var(--text-header);margin-bottom:4px;">${escapeHtml(activeChannelTitle)}</h2>
+            <p style="font-size:0.9rem;color:var(--text-muted);">Это начало истории сообщений с ${escapeHtml(activeChannelTitle)}.</p>
           </div>
         `;
         return;
@@ -4594,6 +4950,10 @@
 
       msgs.forEach(m => {
         if (!m || typeof m !== "object") return;
+        if (typeof m.sender !== "string" || !m.sender.trim()) m.sender = "Участник";
+        else m.sender = m.sender.slice(0, 64);
+        const messageId = typeof m.id === "string" ? m.id.slice(0, 128) : String(m.id || "").slice(0, 128);
+        const chatFontSizePx = Math.min(24, Math.max(12, Number(window.chatFontSizePx) || 15));
         const row = document.createElement("div");
         row.className = "ds-msg";
 
@@ -4605,19 +4965,33 @@
         body.className = "ds-msg-content";
 
         let mediaHtml = "";
-        if (m.mediaUrl) {
-          const isVid = m.mediaType === "video" || m.mediaUrl.startsWith("data:video/") || /\.(mp4|webm|mov|mkv|avi)(\?.*)?$/i.test(m.mediaUrl);
+        const storedMediaUrl = typeof m.mediaUrl === "string" ? m.mediaUrl : "";
+        const rawMediaUrl = (isDmChat && m.mediaUrlE2ee)
+          ? decryptDmPayload(storedMediaUrl, activeChannel)
+          : storedMediaUrl;
+        const mediaIsSafe = isSafeMediaUrl(rawMediaUrl) &&
+          !/^data:image\/svg\+xml/i.test(rawMediaUrl) &&
+          !/^data:audio\//i.test(rawMediaUrl);
+        if (mediaIsSafe) {
+          const isVid = m.mediaType === "video" || /^data:video\//i.test(rawMediaUrl) || /\.(mp4|webm|mov|mkv|avi)(\?.*)?$/i.test(rawMediaUrl);
+          const safeMediaUrl = escapeHtml(rawMediaUrl);
           mediaHtml = isVid
-            ? `<video src="${m.mediaUrl}" controls playsinline preload="metadata" style="max-width:100%;max-height:280px;border-radius:8px;margin-top:6px;background:#000;display:block;"></video>`
-            : `<img src="${m.mediaUrl}" loading="lazy" style="max-width:100%;max-height:300px;border-radius:8px;margin-top:6px;display:block;object-fit:contain;" />`;
+            ? `<video src="${safeMediaUrl}" controls playsinline preload="metadata" style="max-width:100%;max-height:280px;border-radius:8px;margin-top:6px;background:#000;display:block;"></video>`
+            : `<img src="${safeMediaUrl}" loading="lazy" style="max-width:100%;max-height:300px;border-radius:8px;margin-top:6px;display:block;object-fit:contain;" />`;
         }
-        if (m.audioUrl) {
-          mediaHtml += `<audio src="${m.audioUrl}" controls style="height:34px;margin-top:6px;display:block;"></audio>`;
+        const rawAudioUrl = typeof m.audioUrl === "string" ? m.audioUrl : "";
+        const playableAudioUrl = (isDmChat && m.audioUrlE2ee)
+          ? decryptDmPayload(rawAudioUrl, activeChannel)
+          : rawAudioUrl;
+        const audioIsSafe = isSafeMediaUrl(playableAudioUrl) &&
+          (/^https?:\/\//i.test(playableAudioUrl) || /^blob:/i.test(playableAudioUrl) || /^data:audio\//i.test(playableAudioUrl));
+        if (audioIsSafe) {
+          mediaHtml += `<audio src="${escapeHtml(playableAudioUrl)}" controls preload="metadata" style="height:34px;margin-top:6px;display:block;"></audio>`;
         }
 
         let reactHtml = "";
-        if (m.reactions && Object.keys(m.reactions).length) {
-          reactHtml = `<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">${Object.entries(m.reactions).map(([em, c]) => `<span style="background:var(--bg-secondary);border:1px solid var(--divider);border-radius:6px;padding:2px 8px;font-size:0.8rem;cursor:pointer;">${em} ${c}</span>`).join("")}</div>`;
+        if (m.reactions && typeof m.reactions === "object" && !Array.isArray(m.reactions) && Object.keys(m.reactions).length) {
+          reactHtml = `<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">${Object.entries(m.reactions).map(([em, c]) => `<span style="background:var(--bg-secondary);border:1px solid var(--divider);border-radius:6px;padding:2px 8px;font-size:0.8rem;cursor:pointer;">${escapeHtml(em.slice(0, 12))} ${escapeHtml(String(Number.isFinite(Number(c)) ? Number(c) : 0))}</span>`).join("")}</div>`;
         }
 
         let partyHtml = "";
@@ -4625,27 +4999,30 @@
           const slots = Array.isArray(m.slots) ? m.slots : [m.sender, null, null, null, null];
           const filled = slots.filter(Boolean).length;
           const slotsMarkup = slots.map((s, idx) =>
-            s ? `<div class="party-slot filled">👤 ${s}</div>`
+            s ? `<div class="party-slot filled">👤 ${escapeHtml(String(s).slice(0, 64))}</div>`
               : `<div class="party-slot">Слот ${idx + 1}</div>`
           ).join("");
           partyHtml = `
             <div class="ds-party-card">
               <div style="display:flex;justify-content:space-between;align-items:center;">
-                <div style="font-weight:800;color:var(--text-header);font-size:0.95rem;">🎮 Сбор пати: ${m.game || "Counter-Strike 2"}</div>
+                <div style="font-weight:800;color:var(--text-header);font-size:0.95rem;">🎮 Сбор пати: ${escapeHtml(String(m.game || "Counter-Strike 2").slice(0, 80))}</div>
                 <span style="font-size:0.75rem;font-weight:700;color:var(--green);">${filled}/5 игроков</span>
               </div>
               <div class="party-slots">${slotsMarkup}</div>
-              <button class="btn-join-party" data-partyid="${m.id}">${slots.includes(currentUser.name) ? "✓ Вы в лобби" : "+ Занять слот в пати"}</button>
+              <button class="btn-join-party" data-partyid="${escapeHtml(messageId)}">${slots.includes(currentUser.name) ? "✓ Вы в лобби" : "+ Занять слот в пати"}</button>
             </div>
           `;
         }
 
         let replyHtml = "";
-        if (m.replyTo && m.replyTo.sender) {
+        if (m.replyTo && typeof m.replyTo.sender === "string") {
+          const replyText = (isDmChat && m.replyTo.e2ee)
+            ? decryptDmPayload(String(m.replyTo.text || ""), activeChannel)
+            : String(m.replyTo.text || "Вложение");
           replyHtml = `
             <div class="ds-reply-quote">
-              <span class="ds-reply-author">@${m.replyTo.sender}</span>
-              <span>${(m.replyTo.text || "Вложение").replace(/</g, "&lt;").slice(0, 70)}</span>
+              <span class="ds-reply-author">@${escapeHtml(m.replyTo.sender.slice(0, 64))}</span>
+              <span>${escapeHtml(replyText.slice(0, 70))}</span>
             </div>
           `;
         }
@@ -4657,11 +5034,11 @@
         body.innerHTML = `
           ${replyHtml}
           <div class="ds-msg-header">
-            <span class="ds-msg-author" data-username="${m.sender || 'Участник'}" style="cursor:pointer;">${getSenderBadgeIcon(m)} ${m.sender || "Участник"}</span>
+            <span class="ds-msg-author" data-username="${escapeHtml(m.sender)}" style="cursor:pointer;">${getSenderBadgeIcon(m)} ${escapeHtml(m.sender)}</span>
             ${getSenderRankPillHtml(m)}
-            <span class="ds-msg-time">Сегодня, в ${m.time || "12:00"} ${m.edited ? "(изменено)" : ""}${pinBadge}</span>
+            <span class="ds-msg-time">Сегодня, в ${escapeHtml(String(m.time || "12:00").slice(0, 24))} ${m.edited ? "(изменено)" : ""}${m.deliveryState === "sending" ? " • Отправка…" : (m.deliveryState === "pending" ? " • Не отправлено" : "")}${pinBadge}</span>
           </div>
-          ${m.text ? `<div class="ds-msg-text" style="font-size:${window.chatFontSizePx || 15}px;">${formattedText}</div>` : ""}
+          ${m.text ? `<div class="ds-msg-text" style="font-size:${chatFontSizePx}px;">${formattedText}</div>` : ""}
           ${partyHtml}
           ${mediaHtml}
           ${reactHtml}
@@ -4702,7 +5079,7 @@
 
         row.addEventListener("contextmenu", (e) => {
           e.preventDefault();
-          ctxTargetMsgId = m.id;
+          ctxTargetMsgId = messageId;
           ctxTargetMsgObj = m;
           const menu = document.getElementById("ctxMenu");
           menu.style.display = "flex";
@@ -4736,17 +5113,27 @@
       messagesScroller.scrollTop = messagesScroller.scrollHeight;
     }
 
-    async function sendChatMessage(textOverride, mediaUrl = null, mediaType = null) {
-      const txt = textOverride !== undefined ? textOverride : chatInput.value.trim();
-      if (!txt && !mediaUrl) return;
-      if (textOverride === undefined) chatInput.value = "";
+    function createChatMessageId() {
+      const randomMessageId = (window.crypto && typeof window.crypto.randomUUID === "function")
+        ? window.crypto.randomUUID().replace(/-/g, "")
+        : (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) + Date.now().toString(36));
+      return "m_" + Date.now() + "_" + randomMessageId.slice(0, 24);
+    }
 
-      const msgId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2, 5);
-      const inVortexServerChat = !isDmChat && isCurrentUserInVortex();
-      if (inVortexServerChat) {
-        addVortexXp(15);
-      }
+    async function sendChatMessage(textOverride, mediaUrl = null, mediaType = null, deliveryContext = null) {
+      const channelKey = deliveryContext && typeof deliveryContext.channelKey === "string" ? deliveryContext.channelKey : activeChannel;
+      const messageIsDm = deliveryContext && typeof deliveryContext.isDm === "boolean" ? deliveryContext.isDm : isDmChat;
+      const rawText = textOverride !== undefined ? textOverride : chatInput.value.trim();
+      const txt = typeof rawText === "string" ? rawText.slice(0, 4000) : String(rawText || "").slice(0, 4000);
+      if (!channelKey || (!txt && !mediaUrl)) return false;
+      if (textOverride === undefined && activeChannel === channelKey) chatInput.value = "";
+
+      const inVortexServerChat = !messageIsDm && isCurrentUserInVortex();
+      if (inVortexServerChat) addVortexXp(15);
       const rk = getVortexRankInfo(currentUser.level || (currentUser.isOwner ? 999 : 1), currentUser.name);
+      const replyTarget = window.activeReplyTarget && window.__activeReplyChannel === channelKey ? window.activeReplyTarget : null;
+      const replyText = replyTarget ? getPlainChatMessageText(replyTarget, channelKey, messageIsDm) : "";
+      const msgId = createChatMessageId();
       const msgObj = {
         id: msgId,
         sender: currentUser.name,
@@ -4755,72 +5142,204 @@
         senderRank: inVortexServerChat ? rk.title : null,
         isVortexMsg: inVortexServerChat,
         text: txt,
-        mediaUrl,
-        mediaType,
-        replyTo: window.activeReplyTarget ? { id: window.activeReplyTarget.id, sender: window.activeReplyTarget.sender, text: window.activeReplyTarget.text } : null,
+        mediaUrl: mediaType === "audio" ? null : mediaUrl,
+        mediaType: mediaType === "audio" ? null : mediaType,
+        audioUrl: mediaType === "audio" ? mediaUrl : null,
+        replyTo: replyTarget ? {
+          id: replyTarget.id,
+          sender: replyTarget.sender,
+          text: replyText,
+          e2ee: false
+        } : null,
         time: new Date().toTimeString().slice(0, 5),
-        ts: Date.now()
+        ts: Date.now(),
+        deliveryState: "sending",
+        _localDm: messageIsDm
       };
-      if (window.activeReplyTarget) cancelReplyMode();
 
-      if (Date.now() - __lastMsgSentTs < 220) return;
-      __lastMsgSentTs = Date.now();
-
-      if (!localChannelStore[activeChannel]) localChannelStore[activeChannel] = [];
-      localChannelStore[activeChannel].push(msgObj);
+      if (replyTarget && activeChannel === channelKey) cancelReplyMode();
+      if (!Array.isArray(localChannelStore[channelKey])) localChannelStore[channelKey] = [];
+      localChannelStore[channelKey].push(msgObj);
       saveLocalStore();
-      renderChatMessages(localChannelStore[activeChannel]);
+      if (activeChannel === channelKey && chatActiveView.style.display === "flex") {
+        renderChatMessages(localChannelStore[channelKey]);
+      }
 
-      try {
-        const cloudPayload = (isDmChat && msgObj.text)
-          ? { ...msgObj, text: encryptDmPayload(msgObj.text, activeChannel), e2ee: true }
-          : msgObj;
-        await fetch(`${DB_URL}/channels_v22/${encodeURIComponent(activeChannel)}/${msgId}.json`, {
-          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cloudPayload)
-        });
-      } catch (e) {}
+      let sent = false;
+      try { sent = await writeChatMessageToCloud(channelKey, msgObj, messageIsDm); }
+      catch (error) { console.warn("Chat message queued after send error:", msgId, error); }
+      const currentMessage = (localChannelStore[channelKey] || []).find(m => m && m.id === msgId);
+      if (currentMessage) currentMessage.deliveryState = sent ? "sent" : "pending";
+      saveLocalStore();
+      if (activeChannel === channelKey && chatActiveView.style.display === "flex") {
+        renderChatMessages(localChannelStore[channelKey] || []);
+      }
+      if (!sent) retryPendingChatMessages(channelKey);
+      return sent;
     }
 
-    chatInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        if (window.__stagedMediaAttachment) {
-          const att = window.__stagedMediaAttachment;
-          clearStagedMedia();
-          sendChatMessage(chatInput.value.trim(), att.url, att.type);
-          chatInput.value = "";
-        } else {
-          sendChatMessage();
+    const __channelFetchLocks = new Set();
+    const __pendingChatRetryLocks = new Set();
+
+    async function writeChatMessageToCloud(channelKey, msgObj, isDm) {
+      const cloudPayload = { ...msgObj };
+      delete cloudPayload.deliveryState;
+      delete cloudPayload._localDm;
+      if (isDm) {
+        if (typeof cloudPayload.mediaUrl === "string" && cloudPayload.mediaUrl) {
+          cloudPayload.mediaUrl = encryptDmPayload(cloudPayload.mediaUrl, channelKey);
+          cloudPayload.mediaUrlE2ee = true;
+        }
+        if (typeof cloudPayload.audioUrl === "string" && cloudPayload.audioUrl) {
+          cloudPayload.audioUrl = encryptDmPayload(cloudPayload.audioUrl, channelKey);
+          cloudPayload.audioUrlE2ee = true;
+        }
+        if (cloudPayload.replyTo && typeof cloudPayload.replyTo === "object") {
+          cloudPayload.replyTo = { ...cloudPayload.replyTo };
+          if (typeof cloudPayload.replyTo.text === "string" && cloudPayload.replyTo.text) {
+            cloudPayload.replyTo.text = encryptDmPayload(cloudPayload.replyTo.text, channelKey);
+            cloudPayload.replyTo.e2ee = true;
+          }
+        }
+        if (cloudPayload.text) {
+          cloudPayload.text = encryptDmPayload(cloudPayload.text, channelKey);
+          cloudPayload.e2ee = true;
         }
       }
-    });
+      const url = DB_URL + "/channels_v22/" + encodeURIComponent(channelKey) + "/" + encodeURIComponent(msgObj.id) + ".json";
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await fetchWithTimeout(url, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cloudPayload)
+          }, 12000);
+          if (response && response.ok) return true;
+          throw new Error("Firebase message write failed (" + (response ? response.status : "no response") + ")");
+        } catch (error) {
+          if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 350));
+          else console.warn("Message remains queued for retry:", msgObj.id, error);
+        }
+      }
+      return false;
+    }
 
-    let __isFetchingMsgs = false;
-    async function fetchChannelMessages(chKey) {
-      if (__isFetchingMsgs) return;
-      __isFetchingMsgs = true;
+    async function patchEditedChatMessage(channelKey, message, isDm) {
+      if (!message || !message.id || typeof message.text !== "string") return false;
+      const cloudText = isDm ? encryptDmPayload(message.text, channelKey) : message.text;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await fetchWithTimeout(`${DB_URL}/channels_v22/${encodeURIComponent(channelKey)}/${encodeURIComponent(message.id)}.json`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(isDm ? { text: cloudText, e2ee: true, edited: true } : { text: cloudText, edited: true })
+          }, 7000);
+          if (response && response.ok) return true;
+        } catch (_error) {}
+        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 400));
+      }
+      return false;
+    }
+
+    async function retryPendingChatMessages(channelKey) {
+      const key = String(channelKey || "");
+      const retryUser = currentUser;
+      const retryStore = localChannelStore;
+      if (!key || !retryUser || retryUser.isAuthenticated !== true || __pendingChatRetryLocks.has(key)) return;
+      const list = retryStore[key] || [];
+      const pending = list.filter(m => m && m.id &&
+        (["sending", "pending"].includes(m.deliveryState) || m.editPending === true)).slice(0, 20);
+      if (!pending.length) return;
+      __pendingChatRetryLocks.add(key);
       try {
-        const r = await fetch(`${DB_URL}/channels_v22/${encodeURIComponent(chKey)}.json`);
-        if (!r.ok) return;
+        for (const queuedMessage of pending) {
+          if (currentUser !== retryUser || localChannelStore !== retryStore) return;
+          let ok = false;
+          try {
+            if (queuedMessage.editPending === true) {
+              ok = await patchEditedChatMessage(key, queuedMessage, !!queuedMessage._localDm);
+            } else {
+              ok = await writeChatMessageToCloud(key, queuedMessage, !!queuedMessage._localDm);
+            }
+          } catch (error) {
+            console.warn("Could not prepare queued message for delivery:", queuedMessage.id, error);
+          }
+          // A retry started for one account must never mutate another account's live cache.
+          if (currentUser !== retryUser || localChannelStore !== retryStore) return;
+          const currentMessage = (retryStore[key] || []).find(m => m && m.id === queuedMessage.id);
+          if (currentMessage) {
+            if (queuedMessage.editPending === true) {
+              if (ok) delete currentMessage.editPending;
+            } else {
+              currentMessage.deliveryState = ok ? "sent" : "pending";
+            }
+          }
+          saveLocalStore();
+          if (activeChannel === key && chatActiveView.style.display === "flex") {
+            renderChatMessages(retryStore[key] || []);
+          }
+          if (!ok) break;
+        }
+      } finally {
+        __pendingChatRetryLocks.delete(key);
+      }
+    }
+
+    async function fetchChannelMessages(chKey) {
+      if (!chKey) return;
+      const fetchUser = currentUser;
+      const fetchStore = localChannelStore;
+      if (!fetchUser || fetchUser.isAuthenticated !== true) return;
+      const channelLockKey = String(chKey);
+      if (__channelFetchLocks.has(channelLockKey)) return;
+      __channelFetchLocks.add(channelLockKey);
+      retryPendingChatMessages(channelLockKey);
+      try {
+        const url = DB_URL + "/channels_v22/" + encodeURIComponent(channelLockKey) + ".json";
+        const r = await fetchWithTimeout(url, { cache: "no-store" }, 9000);
+        if (currentUser !== fetchUser || localChannelStore !== fetchStore) return;
+        if (!r || !r.ok) return;
         const d = await r.json();
-        if (d && typeof d === "object" && !d.error) {
+        // Account may change while Firebase is streaming the response body.
+        if (currentUser !== fetchUser || localChannelStore !== fetchStore) return;
+        if (d && typeof d === "object" && !Array.isArray(d) && !d.error) {
           const list = Object.entries(d)
             .map(([k, v]) => (v && typeof v === "object" ? { ...v, id: k } : null))
-            .filter(Boolean)
-            .sort((a, b) => (a.ts || 0) - (b.ts || 0));
-          const prevList = localChannelStore[chKey] || [];
-          const sigNew = JSON.stringify(list.map(m => [m.id, m.text, m.edited, m.reactions, m.slots]));
-          const sigOld = JSON.stringify(prevList.map(m => [m.id, m.text, m.edited, m.reactions, m.slots]));
+            .filter(Boolean);
+          const remoteIds = new Set(list.map(m => m.id));
+          const prevList = fetchStore[channelLockKey] || [];
+          const pendingLocal = prevList.filter(m =>
+            m && m.id && (
+              (["sending", "pending"].includes(m.deliveryState) && !remoteIds.has(m.id)) ||
+              m.editPending === true
+            )
+          );
+          const mergedById = new Map(list.map(m => [m.id, m]));
+          pendingLocal.forEach(m => mergedById.set(m.id, m));
+          const mergedList = Array.from(mergedById.values()).sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+          const sigNew = JSON.stringify(mergedList.map(m => [m.id, m.text, m.edited, m.reactions, m.slots, m.deliveryState, m.editPending]));
+          const sigOld = JSON.stringify(prevList.map(m => [m.id, m.text, m.edited, m.reactions, m.slots, m.deliveryState, m.editPending]));
           if (sigNew !== sigOld) {
-            localChannelStore[chKey] = list;
+            fetchStore[channelLockKey] = mergedList;
             saveLocalStore();
-            if (activeChannel === chKey && chatActiveView.style.display === "flex") {
-              renderChatMessages(list);
+            if (activeChannel === channelLockKey && chatActiveView.style.display === "flex") {
+              renderChatMessages(mergedList);
             }
           }
         }
-      } catch (e) {} finally { __isFetchingMsgs = false; }
+      } catch (e) {
+        console.warn("Channel sync failed; local messages were kept:", channelLockKey, e);
+      } finally {
+        __channelFetchLocks.delete(channelLockKey);
+      }
     }
+
+    addWinListener("online", () => retryPendingChatMessages(activeChannel));
+    registerMarkensInterval(() => {
+      if (document.visibilityState === "visible" && chatActiveView.style.display === "flex") {
+        retryPendingChatMessages(activeChannel);
+      }
+    }, 10000);
 
     // ========================================================
     // SMART PHOTO & VIDEO ENGINE (Compression, Preview Bar & Lightbox)
@@ -4829,43 +5348,61 @@
 
     function compressImageIfNeeded(file) {
       return new Promise((resolve) => {
-        if (!file || !file.type.startsWith("image/") || file.type === "image/gif") {
-          const r = new FileReader();
-          r.onload = () => resolve(r.result);
-          r.onerror = () => resolve(null);
-          r.readAsDataURL(file);
-          return;
-        }
-        const r = new FileReader();
-        r.onload = () => {
+        if (!file) return resolve(null);
+        const fileType = typeof file.type === "string" ? file.type : "";
+        const reader = new FileReader();
+        reader.onerror = () => resolve(null);
+        reader.onload = () => {
+          const originalData = typeof reader.result === "string" ? reader.result : null;
+          if (!originalData) return resolve(null);
+          if (!fileType.startsWith("image/") || fileType === "image/gif") return resolve(originalData);
+
           const img = new Image();
+          img.onerror = () => resolve(originalData);
           img.onload = () => {
-            const maxDim = 1600;
-            let w = img.width;
-            let h = img.height;
-            if (w <= maxDim && h <= maxDim && file.size < 450000) {
-              resolve(r.result);
-              return;
+            try {
+              const maxDim = 1600;
+              let width = img.width;
+              let height = img.height;
+              if (!width || !height) return resolve(originalData);
+              if (width <= maxDim && height <= maxDim && file.size < 450000) return resolve(originalData);
+              if (width > height && width > maxDim) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              } else if (height > maxDim) {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+              const canvas = document.createElement("canvas");
+              canvas.width = width;
+              canvas.height = height;
+              const context = canvas.getContext("2d");
+              if (!context) return resolve(originalData);
+              context.drawImage(img, 0, 0, width, height);
+              resolve(canvas.toDataURL("image/jpeg", 0.86) || originalData);
+            } catch (error) {
+              console.warn("Image compression failed; using original attachment:", error);
+              resolve(originalData);
             }
-            if (w > h && w > maxDim) { h = Math.round((h * maxDim) / w); w = maxDim; }
-            else if (h > maxDim) { w = Math.round((w * maxDim) / h); h = maxDim; }
-            const canvas = document.createElement("canvas");
-            canvas.width = w;
-            canvas.height = h;
-            const ctx = canvas.getContext("2d");
-            ctx.drawImage(img, 0, 0, w, h);
-            resolve(canvas.toDataURL("image/jpeg", 0.86));
           };
-          img.onerror = () => resolve(r.result);
-          img.src = r.result;
+          img.src = originalData;
         };
-        r.readAsDataURL(file);
+        try { reader.readAsDataURL(file); }
+        catch (_error) { resolve(null); }
       });
     }
 
     async function stageMediaFileForChat(file) {
       if (!file) return;
-      const isVid = (file.type && file.type.startsWith("video/")) || /\.(mp4|webm|mov|mkv|avi)$/i.test(file.name || "");
+      const allowedImage = /^image\/(?:png|jpeg|gif|webp|avif)$/i.test(file.type || "");
+      const allowedVideo = /^video\/(?:mp4|webm|quicktime|x-matroska)$/i.test(file.type || "") ||
+        /\.(mp4|webm|mov|mkv|avi)$/i.test(file.name || "");
+      const maxAttachmentBytes = 4 * 1024 * 1024;
+      if ((!allowedImage && !allowedVideo) || !Number.isFinite(file.size) || file.size <= 0 || file.size > maxAttachmentBytes) {
+        alert("Поддерживаются изображения и видео размером до 4 МБ. Большие файлы пока не отправляются, чтобы не переполнить локальный кэш.");
+        return;
+      }
+      const isVid = allowedVideo;
       const bar = document.getElementById("mediaAttachPreviewBar");
       const thumbBox = document.getElementById("mediaPreviewThumbBox");
       const nameEl = document.getElementById("mediaPreviewName");
@@ -4878,16 +5415,29 @@
       if (isVid) {
         const r = new FileReader();
         r.onload = () => {
+          if (typeof r.result !== "string") {
+            if (metaEl) metaEl.textContent = "Не удалось прочитать видеофайл.";
+            return;
+          }
           window.__stagedMediaAttachment = { url: r.result, type: "video", name: file.name || "Видео" };
-          if (thumbBox) thumbBox.innerHTML = `<video src="${r.result}" muted style="width:100%;height:100%;object-fit:cover;"></video>`;
+          if (thumbBox) thumbBox.innerHTML = `<video src="${escapeHtml(r.result)}" muted style="width:100%;height:100%;object-fit:cover;"></video>`;
           const kb = Math.round((file.size || 0) / 1024);
           if (metaEl) metaEl.textContent = `🎬 Видео (${kb} КБ) — Нажмите Enter или «Отправить ➤»`;
           chatInput.focus();
         };
-        r.readAsDataURL(file);
+        r.onerror = () => { if (metaEl) metaEl.textContent = "Не удалось прочитать видеофайл."; };
+        try { r.readAsDataURL(file); }
+        catch (_error) { if (metaEl) metaEl.textContent = "Не удалось открыть видеофайл."; }
       } else {
-        const dataUrl = await compressImageIfNeeded(file);
-        if (!dataUrl) return;
+        let dataUrl = null;
+        try { dataUrl = await compressImageIfNeeded(file); }
+        catch (error) {
+          console.warn("Could not prepare image attachment:", error);
+        }
+        if (!dataUrl) {
+          if (metaEl) metaEl.textContent = "Не удалось обработать изображение.";
+          return;
+        }
         window.__stagedMediaAttachment = { url: dataUrl, type: "image", name: file.name || "Фото" };
         if (thumbBox) thumbBox.innerHTML = `<img src="${dataUrl}" style="width:100%;height:100%;object-fit:cover;" />`;
         if (metaEl) metaEl.textContent = `🖼️ Фото готово к отправке — Нажмите Enter или «Отправить ➤»`;
@@ -4980,20 +5530,33 @@
       };
     });
     document.getElementById("ctxCopy").onclick = () => {
-      if (ctxTargetMsgObj?.text) navigator.clipboard?.writeText(ctxTargetMsgObj.text).catch(() => {});
+      if (!ctxTargetMsgObj?.text) return;
+      const copyText = getPlainChatMessageText(ctxTargetMsgObj, activeChannel, isDmChat);
+      navigator.clipboard?.writeText(copyText).catch(() => {});
     };
-    document.getElementById("ctxEdit").onclick = () => {
+    document.getElementById("ctxEdit").onclick = async () => {
       if (!ctxTargetMsgObj) return;
-      const t = prompt("Изменить сообщение:", ctxTargetMsgObj.text || "");
-      if (t !== null) {
-        ctxTargetMsgObj.text = t;
-        ctxTargetMsgObj.edited = true;
-        saveLocalStore();
-        renderChatMessages(localChannelStore[activeChannel]);
-        fetch(`${DB_URL}/channels_v22/${encodeURIComponent(activeChannel)}/${encodeURIComponent(ctxTargetMsgObj.id)}.json`, {
-          method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: t, edited: true })
-        }).catch(() => {});
+      const editChannel = activeChannel;
+      const editIsDm = isDmChat;
+      const message = ctxTargetMsgObj;
+      const currentText = getPlainChatMessageText(message, editChannel, editIsDm);
+      const t = prompt("Изменить сообщение:", currentText || "");
+      if (t === null) return;
+      const nextText = String(t).slice(0, 4000);
+      message.text = nextText;
+      message.e2ee = editIsDm || !!message.e2ee;
+      message._localDm = editIsDm;
+      message.edited = true;
+      saveLocalStore();
+      if (activeChannel === editChannel) renderChatMessages(localChannelStore[editChannel] || []);
+      const saved = await patchEditedChatMessage(editChannel, message, editIsDm);
+      if (saved) delete message.editPending;
+      else {
+        message.editPending = true;
+        console.warn("Edited message queued for cloud retry:", message.id);
       }
+      saveLocalStore();
+      if (!saved) retryPendingChatMessages(editChannel);
     };
     document.getElementById("ctxDelete").onclick = () => {
       if (!ctxTargetMsgObj) return;
@@ -5260,6 +5823,11 @@
       if (localMediaStream && !forceRestart) {
         const hasVid = localMediaStream.getVideoTracks().length > 0;
         if (!needVideo || hasVid) {
+          if (localStudioAudioCtx && localStudioAudioCtx.state === "suspended") {
+            try { await localStudioAudioCtx.resume(); } catch (_resumeError) {
+              console.warn("Studio audio context could not resume; keeping current capture:", _resumeError);
+            }
+          }
           localMediaStream.getAudioTracks().forEach(t => {
             t.enabled = isPushToTalkMode ? isPttPressed : !isMicMuted;
           });
@@ -5295,6 +5863,12 @@
               try { await localStudioAudioCtx.close(); } catch (_e) {}
             }
             localStudioAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+            if (localStudioAudioCtx.state === "suspended") {
+              await localStudioAudioCtx.resume();
+            }
+            if (localStudioAudioCtx.state !== "running") {
+              throw new Error("Studio audio context did not enter the running state");
+            }
             const source = localStudioAudioCtx.createMediaStreamSource(rawStream);
 
             // 1. High-Pass Filter (срезает низкочастотный гул кулеров ПК, микрофонной стойки и дыхания ниже 85 Гц)
@@ -5322,14 +5896,26 @@
             localVoiceCompressor.connect(localMicGainNode);
             localMicGainNode.connect(dest);
 
+            const processedAudioTracks = dest.stream.getAudioTracks().filter(track => track.readyState === "live");
+            if (!processedAudioTracks.length) {
+              throw new Error("Studio audio pipeline produced no live microphone track");
+            }
             const combined = new MediaStream();
-            dest.stream.getAudioTracks().forEach(t => {
+            processedAudioTracks.forEach(t => {
               t.enabled = isPushToTalkMode ? isPttPressed : !isMicMuted;
               combined.addTrack(t);
             });
             rawStream.getVideoTracks().forEach(t => combined.addTrack(t));
             localMediaStream = combined;
           } catch (gainErr) {
+            console.warn("Studio audio processing unavailable; using the real microphone track:", gainErr);
+            if (localStudioAudioCtx && localStudioAudioCtx.state !== "closed") {
+              try { await localStudioAudioCtx.close(); } catch (_closeError) {}
+            }
+            localStudioAudioCtx = null;
+            localHighPassFilter = null;
+            localVoiceCompressor = null;
+            localMicGainNode = null;
             localMediaStream = rawStream;
             localMediaStream.getAudioTracks().forEach(t => {
               t.enabled = isPushToTalkMode ? isPttPressed : !isMicMuted;
@@ -5340,21 +5926,183 @@
       } catch (e) {
         console.warn("Real media devices unavailable or blocked, activating AudioContext media generator:", e);
       }
-      try {
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        localMicGainNode = audioCtx.createGain();
-        const dest = audioCtx.createMediaStreamDestination();
-        localMicGainNode.connect(dest);
-        localMediaStream = dest.stream;
-        return localMediaStream;
-      } catch (e) {
-        return null;
+      return null;
+    }
+
+    async function stopLocalMediaCapture() {
+      const trackSet = new Set();
+      for (const stream of [localMediaStream, localRawMicStream]) {
+        if (!stream || typeof stream.getTracks !== "function") continue;
+        stream.getTracks().forEach(track => trackSet.add(track));
       }
+      trackSet.forEach(track => {
+        try { if (track.readyState !== "ended") track.stop(); } catch (_error) {}
+      });
+
+      localMediaStream = null;
+      localRawMicStream = null;
+      const audioContext = localStudioAudioCtx;
+      localStudioAudioCtx = null;
+      localHighPassFilter = null;
+      localVoiceCompressor = null;
+      localMicGainNode = null;
+      if (audioContext && audioContext.state !== "closed") {
+        try { await audioContext.close(); } catch (_error) {}
+      }
+    }
+
+    async function releaseLocalMediaIfIdle() {
+      const callState = activeDmCall && activeDmCall.state;
+      const dmCallStillNeedsMic = !!activeDmCall && (
+        (activeDmCall.isCaller && ["calling", "connecting", "connected"].includes(callState)) ||
+        (!activeDmCall.isCaller && ["connecting", "connected"].includes(callState))
+      );
+      if (currentVoiceRoom || dmCallStillNeedsMic) return false;
+      await stopLocalMediaCapture();
+      return true;
     }
 
     // Real WebRTC P2P Connection & Signaling Helper (for DM Calls & Multi-Peer Voice Rooms)
     function getWebRtcPairKey(peerName) {
-      return [currentUser.name.toLowerCase(), String(peerName || "").toLowerCase()].sort().join("__");
+      const existingPc = peerName ? activePeerConnections[peerName] : null;
+      if (existingPc && typeof existingPc.__markensSignalingPairKey === "string") return existingPc.__markensSignalingPairKey;
+      const baseKey = [currentUser.name.toLowerCase(), String(peerName || "").toLowerCase()].sort().join("__");
+      const callId = activeDmCall && activeDmCall.peer && activeDmCall.peer.toLowerCase() === String(peerName || "").toLowerCase()
+        ? String(activeDmCall.callId || "") : "";
+      return callId ? baseKey + "__dm_" + callId : baseKey;
+    }
+
+    let __dmCallConnectTimer = null;
+
+    function isDmCallMediaReady(pc) {
+      const track = pc && pc.__markensRemoteAudioTrack;
+      return !!(
+        pc &&
+        pc.connectionState === "connected" &&
+        track &&
+        track.kind === "audio" &&
+        track.readyState === "live" &&
+        track.muted === false &&
+        pc.__markensAudioPlaybackReady === true
+      );
+    }
+
+    function clearDmCallConnectWatchdog() {
+      if (__dmCallConnectTimer) {
+        clearTimeout(__dmCallConnectTimer);
+        __dmCallConnectTimer = null;
+      }
+    }
+
+    function setDmCallStatusText(message) {
+      const label = document.getElementById("dmCallStatusLabel");
+      if (label) label.textContent = message;
+    }
+
+    async function patchDmCallRecord(callId, patch) {
+      if (!callId || !patch || typeof patch !== "object") return false;
+      const url = `${DB_URL}/dm_calls_v25/${encodeURIComponent(callId)}.json`;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await fetchWithTimeout(url, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(patch)
+          }, 5000);
+          if (response && response.ok) return true;
+        } catch (_error) {}
+        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 300));
+      }
+      return false;
+    }
+
+    function armDmCallConnectWatchdog(call, timeoutMs, failureMessage) {
+      clearDmCallConnectWatchdog();
+      if (!call || !call.callId) return;
+      const callId = call.callId;
+      __dmCallConnectTimer = setTimeout(async () => {
+        __dmCallConnectTimer = null;
+        if (!activeDmCall || activeDmCall.callId !== callId || activeDmCall.state === "connected") return;
+        const timedOutUnacceptedIncoming = !activeDmCall.isCaller && activeDmCall.state === "calling";
+        const failedCall = activeDmCall;
+        failedCall.state = "failed";
+        stopRingtone();
+        const message = failureMessage || "Не удалось установить соединение. Проверьте интернет и попробуйте ещё раз.";
+        if (timedOutUnacceptedIncoming) {
+          const incomingModal = document.getElementById("incomingCallModal");
+          if (incomingModal) incomingModal.style.display = "none";
+          setDmCallStatusText("Время ожидания входящего звонка истекло.");
+        } else {
+          showDmCallFailureStage(failedCall, message);
+        }
+        await patchDmCallRecord(callId, {
+          state: "failed",
+          failedBy: currentUser.name,
+          failureReason: message,
+          ts: Date.now()
+        });
+        if (activeDmCall && activeDmCall.callId === callId) closePeerConnectionForUser(activeDmCall.peer);
+        if (timedOutUnacceptedIncoming && activeDmCall && activeDmCall.callId === callId) {
+          activeDmCall = null;
+        }
+        await releaseLocalMediaIfIdle();
+      }, timeoutMs);
+    }
+
+    function maybeMarkDmCallConnected(peerName, pc) {
+      if (!activeDmCall || !activeDmCall.peer || !pc ||
+          activeDmCall.peer.toLowerCase() !== String(peerName || "").toLowerCase()) return false;
+      if (!isDmCallMediaReady(pc)) return false;
+
+      const call = activeDmCall;
+      call.state = "connected";
+      clearDmCallConnectWatchdog();
+      stopRingtone();
+      setDmCallStatusText(`Связь установлена (${call.type === "video" ? "Видео" : "Голос"})`);
+      if (!call.__connectedSoundPlayed) {
+        call.__connectedSoundPlayed = true;
+        playSound("join");
+      }
+      if (!call.__connectedRecordSent && !call.__connectedRecordWriteInFlight) {
+        call.__connectedRecordWriteInFlight = true;
+        patchDmCallRecord(call.callId, {
+          state: "connected",
+          connectedBy: currentUser.name,
+          connectedTs: Date.now()
+        }).then(ok => {
+          if (activeDmCall && activeDmCall.callId === call.callId) {
+            call.__connectedRecordWriteInFlight = false;
+            call.__connectedRecordSent = ok;
+          }
+        });
+      }
+      return true;
+    }
+
+    function markDmCallConnecting(peerName, message) {
+      if (!activeDmCall || !activeDmCall.peer ||
+          activeDmCall.peer.toLowerCase() !== String(peerName || "").toLowerCase() ||
+          activeDmCall.state === "failed") return;
+      activeDmCall.state = "connecting";
+      if (message) setDmCallStatusText(message);
+    }
+
+    function showDmCallFailureStage(call, message) {
+      if (!call || !call.peer) return;
+      const incomingModal = document.getElementById("incomingCallModal");
+      if (incomingModal) incomingModal.style.display = "none";
+      try { openDmWithFriend(call.peer); } catch (_error) {}
+      const stage = document.getElementById("dmCallStage");
+      if (stage) stage.style.display = "flex";
+      const remoteName = document.getElementById("callNameRemote");
+      const remoteAvatar = document.getElementById("callAvRemote");
+      const localName = document.getElementById("callNameLocal");
+      const localAvatar = document.getElementById("callAvLocal");
+      if (remoteName) remoteName.textContent = call.peer;
+      if (remoteAvatar) remoteAvatar.textContent = call.peer.charAt(0).toUpperCase();
+      if (localName) localName.textContent = currentUser.name + " (Вы)";
+      if (localAvatar) localAvatar.textContent = currentUser.name.charAt(0).toUpperCase();
+      setDmCallStatusText(message || "Звонок не состоялся. Можно завершить вызов и попробовать снова.");
     }
 
     function isValidIncomingDmCall(call, callId, currentUserName, now = Date.now()) {
@@ -5364,7 +6112,10 @@
       const callee = call.callee.trim().toLowerCase();
       const current = String(currentUserName || "").trim().toLowerCase();
       if (!caller || !callee || !current || caller === callee || caller === current || callee !== current) return false;
-      if (callId.toLowerCase() !== [caller, callee].sort().join("_")) return false;
+      const expectedPairPrefix = [caller, callee].sort().join("_") + "_";
+      if (!callId.toLowerCase().startsWith(expectedPairPrefix) ||
+          callId.length <= expectedPairPrefix.length ||
+          !/^\d{10,16}_[a-z0-9]{8,32}$/i.test(callId.slice(expectedPairPrefix.length))) return false;
       if (call.state !== "calling" || !["voice", "video"].includes(call.type)) return false;
       const ts = Number(call.ts);
       return Number.isFinite(ts) && ts <= now + 5000 && now - ts >= 0 && now - ts < 35000;
@@ -5388,6 +6139,10 @@
       if (!peerName) return;
       const pc = activePeerConnections[peerName];
       if (pc) {
+        if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+        if (pc.__icePublishRetryTimer) clearTimeout(pc.__icePublishRetryTimer);
+        pc.__iceRestartTimer = null;
+        pc.__icePublishRetryTimer = null;
         try { pc.close(); } catch (e) {}
         delete activePeerConnections[peerName];
       }
@@ -5421,25 +6176,122 @@
       }
     }
 
+    async function flushLocalIceCandidateQueue(pc, pairKey, peerName) {
+      if (!pc || pc.connectionState === "closed") return false;
+      if (pc.__icePublishPromise) return pc.__icePublishPromise;
+      if (!pc.__pendingIceCandidates) pc.__pendingIceCandidates = new Map();
+
+      pc.__icePublishPromise = (async () => {
+        const urlBase = `${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/ice_${encodeURIComponent(currentUser.name)}`;
+        while (pc.connectionState !== "closed" && pc.__pendingIceCandidates.size > 0) {
+          const [candidateId, payload] = pc.__pendingIceCandidates.entries().next().value;
+          let delivered = false;
+          for (let attempt = 1; attempt <= 4; attempt++) {
+            try {
+              const response = await fetchWithTimeout(`${urlBase}/${encodeURIComponent(candidateId)}.json`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+              }, 4500);
+              if (response && response.ok) {
+                delivered = true;
+                break;
+              }
+            } catch (_error) {}
+            if (attempt < 4) await new Promise(resolve => setTimeout(resolve, attempt * 300));
+          }
+
+          if (delivered) {
+            pc.__pendingIceCandidates.delete(candidateId);
+          } else {
+            if (!pc.__icePublishRetryTimer) {
+              pc.__icePublishRetryTimer = setTimeout(() => {
+                pc.__icePublishRetryTimer = null;
+                flushLocalIceCandidateQueue(pc, pairKey, peerName).catch(error =>
+                  console.warn("ICE candidate queue retry failed:", peerName, error)
+                );
+              }, 3500);
+            }
+            break;
+          }
+        }
+        return pc.__pendingIceCandidates.size === 0;
+      })().finally(() => {
+        pc.__icePublishPromise = null;
+        // A candidate can arrive between the empty-queue check and this finally block.
+        if (pc.connectionState !== "closed" && pc.__pendingIceCandidates && pc.__pendingIceCandidates.size > 0 && !pc.__icePublishRetryTimer) {
+          pc.__icePublishRetryTimer = setTimeout(() => {
+            pc.__icePublishRetryTimer = null;
+            flushLocalIceCandidateQueue(pc, pairKey, peerName).catch(error => console.warn("ICE candidate queue follow-up failed:", peerName, error));
+          }, 100);
+        }
+      });
+
+      return pc.__icePublishPromise;
+    }
+
+    function queueLocalIceCandidate(pc, pairKey, peerName, candidate) {
+      if (!pc || !candidate || pc.connectionState === "closed") return;
+      if (!pc.__pendingIceCandidates) pc.__pendingIceCandidates = new Map();
+      const candidateId = "c_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10);
+      pc.__pendingIceCandidates.set(candidateId, {
+        from: currentUser.name,
+        candidate,
+        ts: Date.now()
+      });
+      flushLocalIceCandidateQueue(pc, pairKey, peerName).catch(error =>
+        console.warn("ICE candidate publish failed:", peerName, error)
+      );
+    }
+
     async function ensureWebRtcPeerConnection(peerName, isInitiator = false, needVideo = false) {
       if (!peerName || peerName.toLowerCase() === currentUser.name.toLowerCase()) return null;
       if (activePeerConnections[peerName]) {
         const existingPc = activePeerConnections[peerName];
         if (existingPc.connectionState !== "closed" && existingPc.connectionState !== "failed") {
+          const existingKey = typeof existingPc.__markensSignalingPairKey === "string"
+            ? existingPc.__markensSignalingPairKey : "";
+          const isCurrentDmPeer = !!(activeDmCall && activeDmCall.peer &&
+            activeDmCall.peer.toLowerCase() === peerName.toLowerCase());
+          const expectedDmKey = isCurrentDmPeer
+            ? [currentUser.name.toLowerCase(), peerName.toLowerCase()].sort().join("__") + "__dm_" + String(activeDmCall.callId || "")
+            : "";
+          const existingIsDmSession = existingKey.includes("__dm_");
+          // A voice-room PC and a one-to-one call must never share a signaling namespace.
+          if ((isCurrentDmPeer && existingKey !== expectedDmKey) ||
+              (!isCurrentDmPeer && existingIsDmSession)) {
+            console.warn("Refusing to reuse a peer connection from another MARKENS session:", peerName);
+            return null;
+          }
+          if (existingPc.__markensSetupComplete !== true) {
+            console.warn("Peer connection setup is still in progress; refusing an unsafe early reuse:", peerName);
+            return null;
+          }
           return existingPc;
         }
         try { existingPc.close(); } catch (e) {}
       }
       if (typeof RTCPeerConnection === "undefined") return null;
 
-      const pc = new RTCPeerConnection({
-        iceServers: RTC_ICE_SERVERS,
-        iceCandidatePoolSize: 4
-      });
+      let pc;
+      try {
+        pc = new RTCPeerConnection({ iceServers: RTC_ICE_SERVERS, iceCandidatePoolSize: 4 });
+      } catch (error) {
+        console.warn("Could not create WebRTC peer connection:", peerName, error);
+        return null;
+      }
       activePeerConnections[peerName] = pc;
+      pc.__markensSetupComplete = false;
       const pairKey = getWebRtcPairKey(peerName);
+      pc.__markensSignalingPairKey = pairKey;
 
       const stream = await acquireLocalMediaStream(needVideo);
+      const hasLiveMicrophone = !!(stream && stream.getAudioTracks().some(track => track.readyState === "live"));
+      if (!hasLiveMicrophone) {
+        closePeerConnectionForUser(peerName);
+        return null;
+      }
+      pc.__isMarkensInitiator = !!isInitiator;
       if (stream) {
         stream.getTracks().forEach(track => {
           try {
@@ -5460,6 +6312,14 @@
         });
       }
 
+      const hasLiveAudioSender = pc.getSenders().some(sender =>
+        sender && sender.track && sender.track.kind === "audio" && sender.track.readyState === "live"
+      );
+      if (!hasLiveAudioSender) {
+        closePeerConnectionForUser(peerName);
+        return null;
+      }
+
       if (localScreenStream && localScreenStream.getVideoTracks().length > 0) {
         try {
           pc.addTrack(localScreenStream.getVideoTracks()[0], localScreenStream);
@@ -5468,7 +6328,38 @@
 
       pc.ontrack = (event) => {
         const remoteStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
-        if (activeDmCall && activeDmCall.peer && activeDmCall.peer.toLowerCase() === peerName.toLowerCase()) {
+        const isCurrentDmPeer = !!(activeDmCall && activeDmCall.peer &&
+          activeDmCall.peer.toLowerCase() === peerName.toLowerCase());
+
+        if (isCurrentDmPeer && event.track.kind === "audio") {
+          pc.__markensRemoteAudioTrack = event.track;
+          pc.__markensAudioPlaybackReady = false;
+          const refreshRemoteAudioState = () => {
+            if (event.track.muted || event.track.readyState !== "live") {
+              pc.__markensAudioPlaybackReady = false;
+              if (activeDmCall && activeDmCall.peer &&
+                  activeDmCall.peer.toLowerCase() === peerName.toLowerCase() &&
+                  activeDmCall.state === "connected") {
+                markDmCallConnecting(peerName, "Восстанавливаем передачу звука…");
+                armDmCallConnectWatchdog(activeDmCall, 18000, "Звук не восстановился. Завершите звонок и попробуйте снова.");
+              }
+              return;
+            }
+            maybeMarkDmCallConnected(peerName, pc);
+          };
+          event.track.addEventListener("unmute", refreshRemoteAudioState);
+          event.track.addEventListener("mute", refreshRemoteAudioState);
+          event.track.addEventListener("ended", () => {
+            pc.__markensAudioPlaybackReady = false;
+            if (activeDmCall && activeDmCall.peer &&
+                activeDmCall.peer.toLowerCase() === peerName.toLowerCase()) {
+              markDmCallConnecting(peerName, "Удалённый микрофон отключился. Ожидаем звук…");
+            }
+          });
+          refreshRemoteAudioState();
+        }
+
+        if (isCurrentDmPeer) {
           if (event.track.kind === "video") {
             const vRem = document.getElementById("callVidRemote");
             const avRem = document.getElementById("callAvRemote");
@@ -5483,7 +6374,20 @@
               audRem.srcObject = remoteStream;
               audRem.muted = isDeafened;
               applyOutputDeviceToAudioElement(audRem);
-              audRem.play().catch(() => {});
+              const playResult = audRem.play();
+              if (playResult && typeof playResult.then === "function") {
+                playResult.then(() => {
+                  pc.__markensAudioPlaybackReady = !audRem.paused && !audRem.ended;
+                  maybeMarkDmCallConnected(peerName, pc);
+                }).catch(error => {
+                  pc.__markensAudioPlaybackReady = false;
+                  setDmCallStatusText("Соединение есть, но звук не воспроизводится. Проверьте устройство вывода Windows.");
+                  console.warn("Remote call audio playback failed:", error);
+                });
+              } else {
+                pc.__markensAudioPlaybackReady = !audRem.paused && !audRem.ended;
+                maybeMarkDmCallConnected(peerName, pc);
+              }
             }
           }
         } else {
@@ -5517,44 +6421,94 @@
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/ice_${encodeURIComponent(currentUser.name)}.json`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ from: currentUser.name, candidate: event.candidate.toJSON(), ts: Date.now() })
-          }, 4000).catch(() => {});
+          queueLocalIceCandidate(pc, pairKey, peerName, event.candidate.toJSON());
         }
       };
 
-      pc.onconnectionstatechange = async () => {
-        if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      pc.__iceRestartInProgress = false;
+      pc.__iceRestartTimer = null;
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected") {
+          if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+          pc.__iceRestartTimer = null;
+          pc.__iceRestartInProgress = false;
+          if (!maybeMarkDmCallConnected(peerName, pc)) {
+            markDmCallConnecting(peerName, "Соединение установлено. Ожидаем подтверждения звука…");
+          }
+          return;
+        }
+        if (pc.connectionState === "closed") {
+          if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+          pc.__iceRestartTimer = null;
+          pc.__iceRestartInProgress = false;
+          return;
+        }
+        if (pc.connectionState === "connecting" || pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+          const status = pc.connectionState === "disconnected"
+            ? "Связь прервалась. Пытаемся восстановить…"
+            : (pc.connectionState === "failed" ? "Сеть не установлена. Пытаемся восстановить звонок…" : "Устанавливаем соединение…");
+          markDmCallConnecting(peerName, status);
+          if (activeDmCall && activeDmCall.peer &&
+              activeDmCall.peer.toLowerCase() === peerName.toLowerCase() &&
+              !__dmCallConnectTimer) {
+            armDmCallConnectWatchdog(activeDmCall, pc.connectionState === "disconnected" ? 18000 : 25000,
+              "Не удалось восстановить звонок. Проверьте сеть и попробуйте ещё раз.");
+          }
+        }
+        if (pc.connectionState !== "failed" && pc.connectionState !== "disconnected") return;
+        if (!isInitiator || pc.__iceRestartInProgress || pc.signalingState !== "stable") return;
+        if (pc.__iceRestartTimer) clearTimeout(pc.__iceRestartTimer);
+        const retryDelay = pc.connectionState === "failed" ? 0 : 4000;
+        pc.__iceRestartTimer = setTimeout(async () => {
+          pc.__iceRestartTimer = null;
+          if (pc.connectionState === "closed" || pc.__iceRestartInProgress || pc.signalingState !== "stable") return;
+          pc.__iceRestartInProgress = true;
           try {
             pc.restartIce();
-            if (isInitiator) {
-              const offer = await pc.createOffer({ iceRestart: true });
-              offer.sdp = enhanceSdpForOpusHd(offer.sdp);
-              await pc.setLocalDescription(offer);
-              await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  from: currentUser.name,
-                  to: peerName,
-                  type: "offer",
-                  sdp: pc.localDescription.sdp,
-                  ts: Date.now()
-                })
-              }, 4500);
+            const offer = await pc.createOffer({ iceRestart: true });
+            offer.sdp = enhanceSdpForOpusHd(offer.sdp);
+            await pc.setLocalDescription(offer);
+            const response = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: currentUser.name,
+                to: peerName,
+                type: "offer",
+                sdp: pc.localDescription.sdp,
+                ts: Date.now()
+              })
+            }, 4500);
+            if (!response || !response.ok) throw new Error("ICE restart offer could not be delivered");
+            pc.__lastSdpPublishTs = Date.now();
+          } catch (error) {
+            if (pc.signalingState === "have-local-offer") {
+              try { await pc.setLocalDescription({ type: "rollback" }); } catch (_rollbackError) {}
             }
-          } catch (e) {}
-        }
+            pc.__iceRestartInProgress = false;
+          }
+        }, retryDelay);
       };
 
       if (isInitiator) {
+        // SDP creation/local setup is a hard requirement; do not ring the peer without a valid offer.
         try {
           const offer = await pc.createOffer();
           offer.sdp = enhanceSdpForOpusHd(offer.sdp);
           await pc.setLocalDescription(offer);
-          await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+          if (!pc.localDescription || pc.localDescription.type !== "offer" || !pc.localDescription.sdp) {
+            throw new Error("The browser did not create a local SDP offer");
+          }
+        } catch (error) {
+          console.warn("Could not create the initial WebRTC offer:", peerName, error);
+          closePeerConnectionForUser(peerName);
+          return null;
+        }
+
+        // A temporary signaling write failure is recoverable: keep the local offer and let the
+        // signaling poller retry publishing that exact offer with the same SDP.
+        try {
+          const offerResponse = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -5565,44 +6519,101 @@
               ts: Date.now()
             })
           }, 5000);
-        } catch (e) {}
+          if (!offerResponse || !offerResponse.ok) throw new Error("Initial WebRTC offer could not be delivered");
+          pc.__lastSdpPublishTs = Date.now();
+        } catch (error) {
+          console.warn("Initial WebRTC offer is queued for retry:", peerName, error);
+          pc.__lastSdpPublishTs = 0;
+        }
       }
+      pc.__markensSetupComplete = true;
       return pc;
     }
 
+    const __webrtcPollsInFlight = new Set();
     async function pollWebRtcSignalingForPeer(peerName, needVideo = false) {
       if (!peerName || peerName.toLowerCase() === currentUser.name.toLowerCase()) return;
+      const pollKey = String(peerName).toLowerCase();
+      if (__webrtcPollsInFlight.has(pollKey)) return;
+      __webrtcPollsInFlight.add(pollKey);
       const pairKey = getWebRtcPairKey(peerName);
       try {
         const res = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}.json`, {}, 4500);
-        if (!res.ok) return;
+        if (!res || !res.ok) return;
         const sigData = await res.json();
         if (!sigData || typeof sigData !== "object") return;
 
         let pc = activePeerConnections[peerName];
+
+        // A failed Firebase write must not silently discard the callee's SDP answer.
+        if (pc && pc.__pendingSdpAnswer &&
+            Date.now() - (pc.__lastSdpAnswerPublishTs || 0) > 1800) {
+          pc.__lastSdpAnswerPublishTs = Date.now();
+          try {
+            const answerRetryResponse = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(pc.__pendingSdpAnswer)
+            }, 4500);
+            if (answerRetryResponse && answerRetryResponse.ok) {
+              pc.__pendingSdpAnswer = null;
+              pc.__lastSdpAnswerPublishTs = Date.now();
+            }
+          } catch (_answerRetryError) {}
+        }
+
+        // If the initial offer write failed or its answer was lost, republish the same offer with a fresh timestamp.
+        if (pc && pc.__isMarkensInitiator && pc.signalingState === "have-local-offer" && pc.localDescription?.type === "offer" &&
+            Date.now() - (pc.__lastSdpPublishTs || 0) > 2800) {
+          try {
+            const retryOfferResponse = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: currentUser.name,
+                to: peerName,
+                type: "offer",
+                sdp: pc.localDescription.sdp,
+                ts: Date.now()
+              })
+            }, 4500);
+            if (retryOfferResponse && retryOfferResponse.ok) pc.__lastSdpPublishTs = Date.now();
+          } catch (_retryError) {}
+        }
         if (sigData.sdp && isValidPeerSdpMessage(sigData.sdp, peerName, currentUser.name)) {
           if (sigData.sdp.type === "offer") {
             if (!pc) pc = await ensureWebRtcPeerConnection(peerName, false, needVideo);
-            if (pc && pc.signalingState === "stable" && (!pc.__lastOfferTs || sigData.sdp.ts > pc.__lastOfferTs)) {
-              pc.__lastOfferTs = sigData.sdp.ts;
-              await pc.setRemoteDescription({ type: "offer", sdp: sigData.sdp.sdp });
+            const isNewOffer = !pc.__lastOfferTs || sigData.sdp.ts > pc.__lastOfferTs;
+            const canFinishPendingOffer = pc.signalingState === "have-remote-offer" && sigData.sdp.ts === pc.__lastOfferTs;
+            if (pc && (isNewOffer || canFinishPendingOffer) &&
+                (pc.signalingState === "stable" || pc.signalingState === "have-remote-offer")) {
+              if (pc.signalingState === "stable") {
+                await pc.setRemoteDescription({ type: "offer", sdp: sigData.sdp.sdp });
+                pc.__lastOfferTs = sigData.sdp.ts;
+              }
               const ans = await pc.createAnswer();
               ans.sdp = enhanceSdpForOpusHd(ans.sdp);
               await pc.setLocalDescription(ans);
-              await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
+              pc.__pendingSdpAnswer = {
+                from: currentUser.name,
+                to: peerName,
+                type: "answer",
+                sdp: pc.localDescription.sdp,
+                ts: Date.now()
+              };
+              pc.__lastSdpAnswerPublishTs = Date.now();
+              const answerResponse = await fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pairKey)}/sdp.json`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  from: currentUser.name,
-                  to: peerName,
-                  type: "answer",
-                  sdp: pc.localDescription.sdp,
-                  ts: Date.now()
-                })
+                body: JSON.stringify(pc.__pendingSdpAnswer)
               }, 4500);
+              if (!answerResponse || !answerResponse.ok) throw new Error("Initial WebRTC answer could not be delivered");
+              pc.__pendingSdpAnswer = null;
+              pc.__lastSdpAnswerPublishTs = Date.now();
             }
           } else if (sigData.sdp.type === "answer" && pc && pc.signalingState === "have-local-offer") {
             await pc.setRemoteDescription({ type: "answer", sdp: sigData.sdp.sdp });
+            pc.__iceRestartInProgress = false;
           }
         }
 
@@ -5618,7 +6629,7 @@
             const candidateLooksValid = candidateText !== null && (candidateText === "" || /^candidate:/i.test(candidateText));
             const itemTs = Number(item.ts);
             const itemIsFresh = Number.isFinite(itemTs) && itemTs <= iceNow + 5000 && iceNow - itemTs >= 0 && iceNow - itemTs <= 120000;
-            const senderMatches = !item.from || (typeof item.from === "string" && item.from.toLowerCase() === peerName.toLowerCase());
+            const senderMatches = typeof item.from === "string" && item.from.trim().toLowerCase() === peerName.toLowerCase();
             if (!candidateLooksValid || !itemIsFresh || !senderMatches) continue;
             try {
               await pc.addIceCandidate(candidate);
@@ -5628,105 +6639,194 @@
             }
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn("WebRTC signaling poll failed:", peerName, e);
+      } finally {
+        __webrtcPollsInFlight.delete(pollKey);
+      }
     }
 
     // 1-on-1 DM CALLS CONTROLLER
     async function startDmCall(friendName, type = "voice") {
-      if (!friendName || friendName.toLowerCase() === currentUser.name.toLowerCase()) return;
-      const callId = [currentUser.name.toLowerCase(), friendName.toLowerCase()].sort().join("_");
+      if (!friendName || friendName.toLowerCase() === currentUser.name.toLowerCase() || activeDmCall) return;
+      const callPairKey = [currentUser.name.toLowerCase(), friendName.toLowerCase()].sort().join("_");
+      const callNonce = (window.crypto && typeof window.crypto.randomUUID === "function")
+        ? window.crypto.randomUUID().replace(/-/g, "")
+        : (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+      const callId = callPairKey + "_" + Date.now() + "_" + callNonce.slice(0, 20);
       activeDmCall = {
         peer: friendName,
         type,
         isCaller: true,
         state: "calling",
-        callId
+        callId,
+        __recordPublished: false
       };
 
       startRingtone("outgoing");
       const stage = document.getElementById("dmCallStage");
       if (stage) stage.style.display = "flex";
-      document.getElementById("dmCallStatusLabel").textContent = `Вызов @${friendName}...`;
+      setDmCallStatusText(`Вызов @${friendName}...`);
       document.getElementById("callNameRemote").textContent = friendName;
       document.getElementById("callAvRemote").textContent = friendName.charAt(0).toUpperCase();
       document.getElementById("callNameLocal").textContent = currentUser.name + " (Вы)";
       document.getElementById("callAvLocal").textContent = currentUser.name.charAt(0).toUpperCase();
 
-      // Show video tiles if video call
       const vLoc = document.getElementById("callVidLocal");
-      const vRem = document.getElementById("callVidRemote");
       const avLoc = document.getElementById("callAvLocal");
-      const avRem = document.getElementById("callAvRemote");
-      if (type === "video") {
-        await acquireLocalMediaStream(true);
-        if (localMediaStream && vLoc) {
-          vLoc.srcObject = localMediaStream;
-          vLoc.style.display = "block";
-          if (avLoc) avLoc.style.display = "none";
-        }
+      const callStream = await acquireLocalMediaStream(type === "video");
+      if (!callStream || !callStream.getAudioTracks().some(track => track.readyState === "live")) {
+        stopRingtone();
+        activeDmCall.state = "failed";
+        setDmCallStatusText("Нет доступа к микрофону. Проверьте разрешения Windows и попробуйте снова.");
+        await releaseLocalMediaIfIdle();
+        return;
+      }
+      if (type === "video" && vLoc) {
+        vLoc.srcObject = callStream;
+        vLoc.style.display = "block";
+        if (avLoc) avLoc.style.display = "none";
       } else {
-        await acquireLocalMediaStream(false);
         if (vLoc) vLoc.style.display = "none";
         if (avLoc) avLoc.style.display = "flex";
       }
 
-      ensureWebRtcPeerConnection(friendName, true, type === "video");
-      // Signal in Firebase
-      try {
-        await fetchWithTimeout(`${DB_URL}/dm_calls_v25/${callId}.json`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            caller: currentUser.name,
-            callee: friendName,
-            type,
-            state: "calling",
-            ts: Date.now()
-          })
-        });
-      } catch (e) {}
+      const peerConnection = await ensureWebRtcPeerConnection(friendName, true, type === "video");
+      if (!peerConnection) {
+        stopRingtone();
+        activeDmCall.state = "failed";
+        setDmCallStatusText("Не удалось подготовить голосовое соединение. Проверьте микрофон и повторите звонок.");
+        await releaseLocalMediaIfIdle();
+        return;
+      }
+
+      const invitePayload = {
+        caller: currentUser.name,
+        callee: friendName,
+        type,
+        state: "calling",
+        ts: Date.now()
+      };
+      let invitePublished = false;
+      for (let attempt = 1; attempt <= 3 && !invitePublished; attempt++) {
+        try {
+          const response = await fetchWithTimeout(`${DB_URL}/dm_calls_v25/${encodeURIComponent(callId)}.json`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(invitePayload)
+          }, 5000);
+          invitePublished = !!(response && response.ok);
+        } catch (_error) {}
+        if (!invitePublished && attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 350));
+      }
+
+      if (!invitePublished) {
+        activeDmCall.state = "failed";
+        stopRingtone();
+        setDmCallStatusText("Не удалось отправить приглашение через сервер. Проверьте интернет и попробуйте снова.");
+        closePeerConnectionForUser(friendName);
+        await releaseLocalMediaIfIdle();
+        return;
+      }
+
+      activeDmCall.__recordPublished = true;
+      armDmCallConnectWatchdog(activeDmCall, 35000, "Собеседник не ответил. Звонок завершён.");
     }
 
     async function acceptIncomingCall() {
       stopRingtone();
-      document.getElementById("incomingCallModal").style.display = "none";
-      if (!activeDmCall) return;
-      activeDmCall.state = "connected";
+      const incModal = document.getElementById("incomingCallModal");
+      if (incModal) incModal.style.display = "none";
+      if (!activeDmCall || !activeDmCall.callId || activeDmCall.isCaller) return;
+      const acceptedCall = activeDmCall;
 
-      // Open DM chat with caller
-      openDmWithFriend(activeDmCall.peer);
+      // The caller may have cancelled while the incoming modal was still visible.
+      let liveCallRecord = null;
+      try {
+        const verificationResponse = await fetchWithTimeout(
+          `${DB_URL}/dm_calls_v25/${encodeURIComponent(acceptedCall.callId)}.json`,
+          { cache: "no-store" },
+          5000
+        );
+        if (verificationResponse && verificationResponse.ok) liveCallRecord = await verificationResponse.json();
+      } catch (_verificationError) {}
+      const incomingStillValid = isValidIncomingDmCall(
+        liveCallRecord,
+        acceptedCall.callId,
+        currentUser.name,
+        Date.now()
+      ) &&
+        String(liveCallRecord.caller).toLowerCase() === String(acceptedCall.peer).toLowerCase() &&
+        liveCallRecord.type === acceptedCall.type;
+      if (!incomingStillValid) {
+        acceptedCall.state = "failed";
+        clearDmCallConnectWatchdog();
+        showDmCallFailureStage(acceptedCall, "Этот вызов уже завершён или сервер временно недоступен. Начните новый звонок.");
+        return;
+      }
+
+      const acceptedStream = await acquireLocalMediaStream(acceptedCall.type === "video");
+      if (!acceptedStream || !acceptedStream.getAudioTracks().some(track => track.readyState === "live")) {
+        acceptedCall.state = "failed";
+        clearDmCallConnectWatchdog();
+        showDmCallFailureStage(acceptedCall, "Не удалось получить доступ к микрофону. Звонок не подключён. Проверьте разрешения Windows.");
+        await patchDmCallRecord(acceptedCall.callId, { state: "failed", failedBy: currentUser.name, ts: Date.now() });
+        await releaseLocalMediaIfIdle();
+        return;
+      }
+
+      const acceptedPc = await ensureWebRtcPeerConnection(acceptedCall.peer, false, acceptedCall.type === "video");
+      if (!acceptedPc) {
+        acceptedCall.state = "failed";
+        clearDmCallConnectWatchdog();
+        showDmCallFailureStage(acceptedCall, "Не удалось подготовить аудиосоединение. Проверьте микрофон и повторите попытку.");
+        await patchDmCallRecord(acceptedCall.callId, { state: "failed", failedBy: currentUser.name, ts: Date.now() });
+        await releaseLocalMediaIfIdle();
+        return;
+      }
+
+      acceptedCall.state = "connecting";
+      setDmCallStatusText("Принято. Подключаемся к собеседнику…");
+      armDmCallConnectWatchdog(acceptedCall, 25000, "Не удалось подключиться к собеседнику. Проверьте интернет и попробуйте снова.");
+
+      openDmWithFriend(acceptedCall.peer);
       const stage = document.getElementById("dmCallStage");
       if (stage) stage.style.display = "flex";
-      document.getElementById("dmCallStatusLabel").textContent = `Связь установлена (${activeDmCall.type === 'video' ? 'Видео' : 'Голос'})`;
-      document.getElementById("callNameRemote").textContent = activeDmCall.peer;
-      document.getElementById("callAvRemote").textContent = activeDmCall.peer.charAt(0).toUpperCase();
+      document.getElementById("callNameRemote").textContent = acceptedCall.peer;
+      document.getElementById("callAvRemote").textContent = acceptedCall.peer.charAt(0).toUpperCase();
       document.getElementById("callNameLocal").textContent = currentUser.name + " (Вы)";
       document.getElementById("callAvLocal").textContent = currentUser.name.charAt(0).toUpperCase();
 
-      playSound("join");
-      await acquireLocalMediaStream(activeDmCall.type === "video");
-      await pollWebRtcSignalingForPeer(activeDmCall.peer, activeDmCall.type === "video");
+      const accepted = await patchDmCallRecord(acceptedCall.callId, {
+        state: "accepted",
+        answeredBy: currentUser.name,
+        acceptedTs: Date.now()
+      });
+      if (!accepted) {
+        acceptedCall.state = "failed";
+        clearDmCallConnectWatchdog();
+        setDmCallStatusText("Сервер не подтвердил принятие звонка. Проверьте соединение.");
+        await releaseLocalMediaIfIdle();
+        return;
+      }
 
-      // Update call in Firebase
-      try {
-        await fetch(`${DB_URL}/dm_calls_v25/${activeDmCall.callId}.json`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ state: "connected", answeredBy: currentUser.name })
-        });
-      } catch (e) {}
+      await pollWebRtcSignalingForPeer(acceptedCall.peer, acceptedCall.type === "video");
     }
 
-    function declineIncomingCall() {
+    async function declineIncomingCall() {
+      clearDmCallConnectWatchdog();
       stopRingtone();
-      document.getElementById("incomingCallModal").style.display = "none";
+      const incomingModal = document.getElementById("incomingCallModal");
+      if (incomingModal) incomingModal.style.display = "none";
       if (activeDmCall) {
-        fetch(`${DB_URL}/dm_calls_v25/${activeDmCall.callId}.json`, { method: "DELETE" }).catch(() => {});
+        fetchWithTimeout(`${DB_URL}/dm_calls_v25/${encodeURIComponent(activeDmCall.callId)}.json`, { method: "DELETE" }, 4000).catch(() => {});
         activeDmCall = null;
       }
+      await releaseLocalMediaIfIdle();
     }
 
     async function endDmCall() {
+      clearDmCallConnectWatchdog();
       stopRingtone();
       playSound("leave");
       const stage = document.getElementById("dmCallStage");
@@ -5747,15 +6847,18 @@
       document.getElementById("callAvLocal").style.display = "flex";
       document.getElementById("callAvRemote").style.display = "flex";
 
-      closeAllPeerConnections();
       if (activeDmCall) {
-        const pKey = getWebRtcPairKey(activeDmCall.peer);
+        // Resolve the session key before closing the peer, because closing removes its stored signaling namespace.
+        const peerName = activeDmCall.peer;
+        const pKey = getWebRtcPairKey(peerName);
+        closePeerConnectionForUser(peerName);
         fetchWithTimeout(`${DB_URL}/webrtc_sig_v28/${encodeURIComponent(pKey)}.json`, { method: "DELETE" }, 3500).catch(() => {});
         try {
           await fetchWithTimeout(`${DB_URL}/dm_calls_v25/${activeDmCall.callId}.json`, { method: "DELETE" }, 3500);
         } catch (e) {}
         activeDmCall = null;
       }
+      await releaseLocalMediaIfIdle();
     }
 
     document.getElementById("btnStartDmVoiceCall").onclick = () => startDmCall(activeChannelTitle, "voice");
@@ -5798,43 +6901,114 @@
     // Check for incoming DM calls in Realtime
     let __isCheckingCalls = false;
     async function checkIncomingDmCalls() {
-      if (document.visibilityState !== "visible") return;
-      if (__isCheckingCalls) return;
+      if (document.visibilityState !== "visible" || __isCheckingCalls) return;
       __isCheckingCalls = true;
       try {
-        const res = await fetch(`${DB_URL}/dm_calls_v25.json`);
-        if (!res.ok) return;
+        const res = await fetchWithTimeout(`${DB_URL}/dm_calls_v25.json`, { cache: "no-store" }, 7000);
+        if (!res || !res.ok) return;
         const data = await res.json();
-        if (!data || typeof data !== "object") return;
+        if (!data || typeof data !== "object" || Array.isArray(data)) return;
         const now = Date.now();
-        for (const [cId, call] of Object.entries(data)) {
-          if (!call || typeof call !== "object") continue;
-          if (isValidIncomingDmCall(call, cId, currentUser.name, now)) {
-            if (!activeDmCall || activeDmCall.callId !== cId) {
-              activeDmCall = { peer: call.caller, type: call.type, isCaller: false, state: "calling", callId: cId };
-              const incModal = document.getElementById("incomingCallModal");
-              document.getElementById("incCallName").textContent = call.caller;
-              document.getElementById("incCallAv").textContent = call.caller.charAt(0).toUpperCase();
-              document.getElementById("incCallType").textContent = `Входящий ${call.type === 'video' ? 'видеозвонок' : 'голосовой звонок'}`;
-              incModal.style.display = "flex";
-              startRingtone("incoming");
-            }
-            return;
-          }
-          if (activeDmCall && activeDmCall.callId === cId) {
-            pollWebRtcSignalingForPeer(activeDmCall.peer, activeDmCall.type === "video");
-          }
-          // If caller sees call answered
-          if (activeDmCall && activeDmCall.callId === cId && activeDmCall.isCaller && call.state === "connected") {
-            if (activeDmCall.state !== "connected") {
-              activeDmCall.state = "connected";
+
+        if (activeDmCall) {
+          const currentRecord = data[activeDmCall.callId];
+          if (currentRecord && typeof currentRecord === "object") {
+            activeDmCall.__missingRecordPolls = 0;
+
+            if (["failed", "busy", "ended"].includes(currentRecord.state)) {
+              const wasIncomingRing = !activeDmCall.isCaller && activeDmCall.state === "calling";
+              const failedCall = activeDmCall;
+              failedCall.state = "failed";
+              clearDmCallConnectWatchdog();
               stopRingtone();
-              playSound("join");
-              document.getElementById("dmCallStatusLabel").textContent = `Связь установлена (${call.type === 'video' ? 'Видео' : 'Голос'})`;
+              const message = currentRecord.state === "busy"
+                ? "Собеседник уже разговаривает."
+                : (currentRecord.state === "ended" ? "Собеседник завершил звонок." : "Не удалось подключить собеседника.");
+              closePeerConnectionForUser(failedCall.peer);
+              if (wasIncomingRing) {
+                const incomingModal = document.getElementById("incomingCallModal");
+                if (incomingModal) incomingModal.style.display = "none";
+                setDmCallStatusText(message);
+                if (activeDmCall && activeDmCall.callId === failedCall.callId) activeDmCall = null;
+              } else {
+                showDmCallFailureStage(failedCall, message);
+              }
+              await releaseLocalMediaIfIdle();
+              return;
+            }
+
+            if (activeDmCall.isCaller && currentRecord.state === "accepted" && activeDmCall.state === "calling") {
+              activeDmCall.state = "connecting";
+              stopRingtone();
+              setDmCallStatusText("Собеседник принял вызов. Устанавливаем соединение…");
+              armDmCallConnectWatchdog(activeDmCall, 25000, "Не удалось установить соединение. Проверьте интернет и попробуйте ещё раз.");
+            }
+
+            if (currentRecord.state === "connected" && activeDmCall.state !== "connected") {
+              setDmCallStatusText("Собеседник подключился. Проверяем передачу звука…");
+            }
+
+            if (activeDmCall.isCaller || ["accepted", "connected"].includes(currentRecord.state) ||
+                ["connecting", "connected"].includes(activeDmCall.state)) {
+              await pollWebRtcSignalingForPeer(activeDmCall.peer, activeDmCall.type === "video");
+            }
+          } else if (activeDmCall.__recordPublished) {
+            activeDmCall.__missingRecordPolls = (activeDmCall.__missingRecordPolls || 0) + 1;
+            if (activeDmCall.__missingRecordPolls >= 3) {
+              const missedIncomingWasStillRinging = !activeDmCall.isCaller && activeDmCall.state === "calling";
+              const missingCall = activeDmCall;
+              missingCall.state = "failed";
+              clearDmCallConnectWatchdog();
+              stopRingtone();
+              if (missedIncomingWasStillRinging) {
+                const incomingModal = document.getElementById("incomingCallModal");
+                if (incomingModal) incomingModal.style.display = "none";
+                setDmCallStatusText("Вызов отменён собеседником.");
+              } else {
+                setDmCallStatusText("Звонок завершён другой стороной.");
+              }
+              closePeerConnectionForUser(missingCall.peer);
+              if (missedIncomingWasStillRinging && activeDmCall && activeDmCall.callId === missingCall.callId) {
+                activeDmCall = null;
+              }
+              await releaseLocalMediaIfIdle();
+              return;
             }
           }
         }
-      } catch (e) {} finally { __isCheckingCalls = false; }
+
+        if (!activeDmCall) {
+          for (const [cId, call] of Object.entries(data)) {
+            if (!isValidIncomingDmCall(call, cId, currentUser.name, now)) continue;
+            activeDmCall = {
+              peer: call.caller,
+              type: call.type,
+              isCaller: false,
+              state: "calling",
+              callId: cId,
+              __recordPublished: true,
+              __missingRecordPolls: 0
+            };
+            const incModal = document.getElementById("incomingCallModal");
+            document.getElementById("incCallName").textContent = call.caller;
+            document.getElementById("incCallAv").textContent = call.caller.charAt(0).toUpperCase();
+            document.getElementById("incCallType").textContent = `Входящий ${call.type === "video" ? "видеозвонок" : "голосовой звонок"}`;
+            if (incModal) incModal.style.display = "flex";
+            startRingtone("incoming");
+            armDmCallConnectWatchdog(activeDmCall, 30000, "Время ожидания входящего звонка истекло.");
+            break;
+          }
+        } else {
+          for (const [otherId, otherCall] of Object.entries(data)) {
+            if (otherId === activeDmCall.callId || !isValidIncomingDmCall(otherCall, otherId, currentUser.name, now)) continue;
+            await patchDmCallRecord(otherId, { state: "busy", busyBy: currentUser.name, ts: Date.now() });
+          }
+        }
+      } catch (e) {
+        console.warn("Incoming call check failed:", e);
+      } finally {
+        __isCheckingCalls = false;
+      }
     }
 
     // SERVER VOICE ROOMS (Лобби, Катка, Стрим-рум, Кинозал)
@@ -5865,9 +7039,9 @@
         const tree = document.getElementById("tree_" + rId);
         if (tree) {
           tree.innerHTML = `
-            <div class="vc-user" data-user="${currentUser.name}">
-              <div class="vc-av">${currentUser.name.charAt(0).toUpperCase()}</div>
-              <span style="font-weight:600;font-size:0.84rem;color:var(--text-header);">${currentUser.name}</span>
+            <div class="vc-user" data-user="${escapeHtml(currentUser.name)}">
+              <div class="vc-av">${escapeHtml(currentUser.name.charAt(0).toUpperCase())}</div>
+              <span style="font-weight:600;font-size:0.84rem;color:var(--text-header);">${escapeHtml(currentUser.name)}</span>
               <div class="voice-wave-bars">
                 <span class="voice-bar"></span>
                 <span class="voice-bar"></span>
@@ -5898,8 +7072,9 @@
       });
 
       try {
-        await fetch(`${DB_URL}/voiceRooms_v22/${encodeURIComponent(leavingUser)}.json`, { method: "DELETE" });
+        await fetchWithTimeout(`${DB_URL}/voiceRooms_v22/${encodeURIComponent(leavingUser)}.json`, { method: "DELETE" }, 4000);
       } catch (e) {}
+      await releaseLocalMediaIfIdle();
     };
 
     // PUSH-TO-TALK & MICROPHONE ECHO TEST CONTROLS
@@ -6394,11 +7569,70 @@
       b.onclick = () => applyThemeClass(b.getAttribute("data-theme") || "");
     });
 
-    document.getElementById("btnLogout").onclick = () => {
-      safeRemove("markens_user_session");
-      try { document.cookie = "markens_session=; path=/; max-age=0"; } catch (e) {}
-      document.getElementById("settingsModal").style.display = "none";
-      authModal.style.display = "flex";
+    async function cleanupActiveSessionForLogout() {
+      if (activeDmCall) {
+        try { await endDmCall(); } catch (error) { console.warn("Could not cleanly end the active DM call during logout:", error); }
+      } else {
+        try { stopRingtone(); } catch (error) {}
+      }
+
+      if (currentVoiceRoom) {
+        const leavingUser = currentUser && currentUser.name;
+        const wasInCinema = currentVoiceRoom.id === "room_cinema";
+        let othersInCinema = 0;
+        try { othersInCinema = countOtherUsersInCinema(); } catch (error) {}
+
+        try {
+          const leaveButton = document.getElementById("btnLeaveVoice");
+          if (leaveButton && typeof leaveButton.onclick === "function") await leaveButton.onclick();
+        } catch (error) {
+          console.warn("Could not cleanly leave the voice room during logout:", error);
+        }
+
+        if (currentVoiceRoom) {
+          currentVoiceRoom = null;
+          try { clearCinemaVideoState(wasInCinema && othersInCinema === 0); } catch (error) {}
+          const rtcPanel = document.getElementById("rtcPanel");
+          if (rtcPanel) rtcPanel.style.display = "none";
+        }
+        if (leavingUser && currentUser && currentUser.isAuthenticated === true) {
+          try {
+            await fetchWithTimeout(`${DB_URL}/voiceRooms_v22/${encodeURIComponent(leavingUser)}.json`, { method: "DELETE" }, 4000);
+          } catch (error) {}
+        }
+      }
+
+      try { closeAllPeerConnections(); } catch (error) {}
+      try { stopScreenShare(); } catch (error) {}
+      try { await stopLocalMediaCapture(); } catch (error) {}
+      if (micEchoStream) {
+        try { micEchoStream.getTracks().forEach(track => track.stop()); } catch (error) {}
+        micEchoStream = null;
+      }
+      if (micEchoAudioCtx && micEchoAudioCtx.state !== "closed") {
+        try { await micEchoAudioCtx.close(); } catch (error) {}
+      }
+      micEchoAudioCtx = null;
+      micEchoTestActive = false;
+    }
+
+    document.getElementById("btnLogout").onclick = async () => {
+      if (window.__markensLogoutInProgress) return;
+      window.__markensLogoutInProgress = true;
+      try {
+        await cleanupActiveSessionForLogout();
+        safeRemove("markens_user_session");
+        try { document.cookie = "markens_session=; path=/; max-age=0"; } catch (e) {}
+        currentUser = { name: "Гость", isAuthenticated: false, isOwner: false, joinedVortex: false, status: "Не в сети", game: null, avatar: null };
+        localChannelStore = Object.create(null);
+        myFriends = [];
+        pendingInvites = [];
+        document.getElementById("settingsModal").style.display = "none";
+        authModal.style.display = "flex";
+        applyUserUI();
+      } finally {
+        window.__markensLogoutInProgress = false;
+      }
     };
 
     // User status toggle
@@ -6424,28 +7658,61 @@
 
     // Custom avatar
     document.getElementById("inpCustomAvatar").onchange = (e) => {
-      const f = e.target.files[0];
+      const f = e.target.files && e.target.files[0];
       if (!f) return;
+      if (!/^image\/(?:png|jpeg|gif|webp|avif)$/i.test(f.type) || f.size > 5 * 1024 * 1024) {
+        alert("Выберите изображение PNG, JPG, GIF, WEBP или AVIF размером не более 5 МБ.");
+        e.target.value = "";
+        return;
+      }
       const r = new FileReader();
       r.onload = () => {
-        currentUser.avatar = r.result;
+        const avatarUrl = typeof r.result === "string" && isSafeAvatarUrl(r.result) ? r.result : "";
+        if (!avatarUrl) {
+          alert("Не удалось прочитать выбранное изображение.");
+          return;
+        }
+        currentUser.avatar = avatarUrl;
         saveSessionPermanently(currentUser);
-        document.querySelector("#dockAvatar").innerHTML = `<img src="${r.result}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot" id="dockStatusDot"></span>`;
-        document.querySelector("#rpAvatar").innerHTML = `<img src="${r.result}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot"></span>`;
+        const safeAvatarUrl = escapeHtml(avatarUrl);
+        const dockAvatar = document.querySelector("#dockAvatar");
+        const profileAvatar = document.querySelector("#rpAvatar");
+        if (dockAvatar) dockAvatar.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot" id="dockStatusDot"></span>`;
+        if (profileAvatar) profileAvatar.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot"></span>`;
       };
+      r.onerror = () => alert("Ошибка чтения файла изображения.");
       r.readAsDataURL(f);
     };
 
     // Steam save
     document.getElementById("btnSaveSteam").onclick = () => {
-      const url = document.getElementById("inpSteamUrl").value.trim();
+      const rawUrl = document.getElementById("inpSteamUrl").value.trim();
+      let safeSteamUrl = "";
+      if (rawUrl) {
+        try {
+          const parsedSteamUrl = new URL(rawUrl);
+          if (parsedSteamUrl.protocol !== "https:" ||
+              !["steamcommunity.com", "www.steamcommunity.com"].includes(parsedSteamUrl.hostname.toLowerCase()) ||
+              !/^\/(?:profiles|id)\/[a-zA-Z0-9_-]{2,64}\/?$/.test(parsedSteamUrl.pathname)) {
+            throw new Error("Invalid Steam profile URL");
+          }
+          safeSteamUrl = parsedSteamUrl.href;
+        } catch (_error) {
+          const steamFeedback = document.getElementById("steamFeedback");
+          if (steamFeedback) {
+            steamFeedback.textContent = "Укажите официальную ссылку профиля Steam (steamcommunity.com/id/... или /profiles/...).";
+            steamFeedback.style.color = "var(--red)";
+          }
+          return;
+        }
+      }
       const game = document.getElementById("selCurrentGame").value;
       currentUser.game = game;
-      currentUser.steamUrl = url;
+      currentUser.steamUrl = safeSteamUrl;
       saveSessionPermanently(currentUser);
       document.getElementById("rpGame").textContent = game;
-      document.getElementById("rpSteamInfo").innerHTML = url
-        ? `<a href="${url}" target="_blank" style="color:var(--green);text-decoration:underline;">Профиль Steam ↗</a>`
+      document.getElementById("rpSteamInfo").innerHTML = safeSteamUrl
+        ? `<a href="${escapeHtml(safeSteamUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--green);text-decoration:underline;">Профиль Steam ↗</a>`
         : "Активность Steam";
       const b = document.getElementById("btnSaveSteam");
       b.textContent = "Сохранено!";
@@ -6502,40 +7769,46 @@ goto loop`;
     const btnVoiceNote = document.getElementById("btnVoiceNote");
     btnVoiceNote.onclick = async () => {
       if (voiceRec && voiceRec.state === "recording") {
+        clearTimeout(voiceRec.__maxDurationTimer);
         voiceRec.stop();
         btnVoiceNote.style.color = "var(--text-muted)";
         return;
       }
       try {
+        const recordingChannel = activeChannel;
+        const recordingIsDm = isDmChat;
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         voiceChunks = [];
         voiceRec = new MediaRecorder(stream);
         voiceRec.ondataavailable = (e) => { if (e.data.size > 0) voiceChunks.push(e.data); };
         voiceRec.onstop = () => {
+          clearTimeout(voiceRec.__maxDurationTimer);
+          btnVoiceNote.style.color = "var(--text-muted)";
           stream.getTracks().forEach(t => t.stop());
-          const blob = new Blob(voiceChunks, { type: "audio/webm" });
+          const blob = new Blob(voiceChunks, { type: voiceRec.mimeType || "audio/webm" });
+          voiceChunks = [];
+          if (!blob.size || blob.size > 2 * 1024 * 1024) {
+            alert("Голосовое сообщение получилось слишком большим (лимит 2 МБ). Запишите его короче.");
+            return;
+          }
           const reader = new FileReader();
           reader.onload = () => {
-            const msgId = "m_" + Date.now();
-            const msgObj = {
-              id: msgId,
-              sender: currentUser.name,
-              text: "Голосовое сообщение",
-              audioUrl: reader.result,
-              time: new Date().toTimeString().slice(0, 5),
-              ts: Date.now()
-            };
-            if (!localChannelStore[activeChannel]) localChannelStore[activeChannel] = [];
-            localChannelStore[activeChannel].push(msgObj);
-            saveLocalStore();
-            renderChatMessages(localChannelStore[activeChannel]);
-            fetch(`${DB_URL}/channels_v22/${encodeURIComponent(activeChannel)}/${msgId}.json`, {
-              method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(msgObj)
-            }).catch(() => {});
+            if (typeof reader.result !== "string") return;
+            sendChatMessage("Голосовое сообщение", reader.result, "audio", {
+              channelKey: recordingChannel,
+              isDm: recordingIsDm
+            });
           };
+          reader.onerror = () => alert("Не удалось подготовить голосовое сообщение.");
           reader.readAsDataURL(blob);
         };
-        voiceRec.start();
+        voiceRec.start(1000);
+        voiceRec.__maxDurationTimer = setTimeout(() => {
+          if (voiceRec && voiceRec.state === "recording") {
+            alert("Достигнут лимит записи 2 минуты. Голосовое сообщение будет отправлено.");
+            voiceRec.stop();
+          }
+        }, 120000);
         btnVoiceNote.style.color = "var(--red)";
       } catch (e) {}
     };
@@ -6589,43 +7862,75 @@ goto loop`;
     let __isSyncingAllData = false;
     async function syncAllData() {
       if (document.visibilityState !== "visible") return;
-      if (__isSyncingAllData) return;
+      const syncUser = currentUser;
+      const syncUserName = syncUser && typeof syncUser.name === "string" ? syncUser.name : "";
+      if (!syncUserName || !syncUser || syncUser.isAuthenticated !== true) return;
+
+      // Lock by authenticated session object, not by a global flag or username.
+      // A -> B -> A creates a new session object even though the account name is the same.
+      const inFlightSessions = syncAllData.__markensInFlightSessions ||
+        (syncAllData.__markensInFlightSessions = new Set());
+      if (inFlightSessions.has(syncUser)) return;
+      const syncFriends = myFriends;
+      const syncInvites = pendingInvites;
+      const isCurrentSession = () =>
+        currentUser === syncUser &&
+        syncUser.isAuthenticated === true &&
+        syncUser.name === syncUserName &&
+        myFriends === syncFriends &&
+        pendingInvites === syncInvites;
+
+      inFlightSessions.add(syncUser);
       __isSyncingAllData = true;
       try {
-        const fRes = await fetch(`${DB_URL}/friends_v22/${encodeURIComponent(currentUser.name)}.json`);
-        if (fRes.ok) {
+        const fRes = await fetchWithTimeout(`${DB_URL}/friends_v22/${encodeURIComponent(syncUserName)}.json`, { cache: "no-store" }, 8000);
+        if (!isCurrentSession()) return;
+        if (fRes && fRes.ok) {
           const fData = await fRes.json();
+          if (!isCurrentSession()) return;
           if (fData && typeof fData === "object" && !fData.error) {
-            Object.keys(fData).forEach(fn => { if (!myFriends.includes(fn)) myFriends.push(fn); });
-            safeSet("markens_friends_clean", JSON.stringify(myFriends));
+            Object.keys(fData).forEach(fn => { if (!syncFriends.includes(fn)) syncFriends.push(fn); });
+            safeSet(getAccountScopedStorageKey("markens_friends_clean", syncUserName), JSON.stringify(syncFriends));
           }
         }
-        const iRes = await fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(currentUser.name)}.json`);
-        if (iRes.ok) {
+        const iRes = await fetchWithTimeout(`${DB_URL}/friend_requests_v24/${encodeURIComponent(syncUserName)}.json`, { cache: "no-store" }, 8000);
+        if (!isCurrentSession()) return;
+        if (iRes && iRes.ok) {
           const iData = await iRes.json();
+          if (!isCurrentSession()) return;
           if (iData && typeof iData === "object" && !iData.error) {
             Object.values(iData).forEach(inv => {
-              if (inv && inv.from && !pendingInvites.some(x => x.from === inv.from)) pendingInvites.push(inv);
+              if (inv && inv.from && !syncInvites.some(x => x.from === inv.from)) syncInvites.push(inv);
             });
-            safeSet("markens_invites_clean", JSON.stringify(pendingInvites));
+            safeSet(getAccountScopedStorageKey("markens_invites_clean", syncUserName), JSON.stringify(syncInvites));
           }
         }
-      } catch (e) {}
-      if (friendsHubView.style.display !== "none") renderFriendsHub();
-      __isSyncingAllData = false;
+      } catch (e) {
+        console.warn("MARKENS account sync failed:", e);
+      } finally {
+        if (isCurrentSession() && friendsHubView.style.display !== "none") {
+          try { renderFriendsHub(); } catch (e) {}
+        }
+        inFlightSessions.delete(syncUser);
+        __isSyncingAllData = inFlightSessions.size > 0;
+      }
     }
 
     let __isSyncingVoice = false;
     async function syncVoiceAndMembers() {
+      const voiceSyncUser = currentUser;
+      const voiceSyncName = voiceSyncUser && typeof voiceSyncUser.name === "string" ? voiceSyncUser.name.trim() : "";
+      // The startup timer is active before authentication. Never publish a synthetic Guest presence.
+      if (!voiceSyncName || !voiceSyncUser || voiceSyncUser.isAuthenticated !== true) return;
       if (document.visibilityState !== "visible") return;
       if (__isSyncingVoice) return;
       __isSyncingVoice = true;
       try {
         if (currentVoiceRoom) {
-          await fetch(`${DB_URL}/voiceRooms_v22/${encodeURIComponent(currentUser.name)}.json`, {
+          await fetchWithTimeout(`${DB_URL}/voiceRooms_v22/${encodeURIComponent(voiceSyncName)}.json`, {
             method: "PUT", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              user: currentUser.name,
+              user: voiceSyncName,
               roomId: currentVoiceRoom.id,
               roomName: currentVoiceRoom.name,
               mic: !isMicMuted,
@@ -6633,11 +7938,14 @@ goto loop`;
               speaking: isCurrentlySpeaking,
               ts: Date.now()
             })
-          });
+          }, 8000);
+          if (currentUser !== voiceSyncUser) return;
         }
-        const vRes = await fetch(`${DB_URL}/voiceRooms_v22.json`);
+        const vRes = await fetchWithTimeout(`${DB_URL}/voiceRooms_v22.json`, { cache: "no-store" }, 8000);
+        if (currentUser !== voiceSyncUser) return;
         if (vRes.ok) {
           const vData = await vRes.json();
+          if (currentUser !== voiceSyncUser) return;
           ["room_lobby", "room_match", "room_stream", "room_cinema"].forEach(k => {
             const t = document.getElementById("tree_" + k);
             if (t) t.innerHTML = "";
@@ -6646,15 +7954,17 @@ goto loop`;
           if (vData && typeof vData === "object" && !vData.error) {
             const now = Date.now();
             Object.values(vData).forEach(v => {
-              if (!v || !v.roomId || !v.user) return;
-              if (v.user.toLowerCase() === currentUser.name.toLowerCase() && !currentVoiceRoom) return;
+              if (!v || typeof v.user !== "string" || !v.user.trim() ||
+                  typeof v.roomId !== "string" || !/^room_[a-zA-Z0-9_-]{1,64}$/.test(v.roomId)) return;
+              v.user = v.user.trim().slice(0, 64);
+              if (v.user.toLowerCase() === voiceSyncName.toLowerCase() && !currentVoiceRoom) return;
               if (v.ts && now - v.ts > 20000) return;
-              if (v.roomId === "room_cinema" && v.user.toLowerCase() !== currentUser.name.toLowerCase()) {
+              if (v.roomId === "room_cinema" && v.user.toLowerCase() !== voiceSyncName.toLowerCase()) {
                 cinemaCount++;
               }
               const tree = document.getElementById("tree_" + v.roomId);
               if (tree) {
-                const isMe = v.user.toLowerCase() === currentUser.name.toLowerCase();
+                const isMe = v.user.toLowerCase() === voiceSyncName.toLowerCase();
                 const isMuted = isMe ? isMicMuted : (v.mic === false);
                 const isDeaf = isMe ? isDeafened : (v.deaf === true);
                 const isSpeaking = isMe ? isCurrentlySpeaking : (v.speaking === true);
@@ -6663,16 +7973,17 @@ goto loop`;
                 const row = document.createElement("div");
                 row.className = "vc-user" + (isSpeaking ? " speaking" : "");
                 row.setAttribute("data-user", v.user);
+                const safeVoiceUser = escapeHtml(v.user);
                 row.innerHTML = `
-                  <div class="vc-av ${isSpeaking ? 'speaking' : ''}">${v.user.charAt(0).toUpperCase()}</div>
-                  <span style="font-weight:600;font-size:0.84rem;color:var(--text-header);">${v.user}</span>
+                  <div class="vc-av ${isSpeaking ? 'speaking' : ''}">${escapeHtml(v.user.charAt(0).toUpperCase())}</div>
+                  <span style="font-weight:600;font-size:0.84rem;color:var(--text-header);">${safeVoiceUser}</span>
                   <div class="voice-wave-bars ${isSpeaking ? 'speaking' : ''}">
                     <span class="voice-bar"></span>
                     <span class="voice-bar"></span>
                     <span class="voice-bar"></span>
                   </div>
                   <span style="font-size:0.75rem;margin-left:4px;">${isDeaf ? "🔕" : (isMuted ? "🔇" : "🎙️")}</span>
-                  ${!isMe ? `<button class="vc-vol-badge" data-voluser="${v.user}" title="Громкость пользователя">🔊 ${userVol}%</button>` : ""}
+                  ${!isMe ? `<button class="vc-vol-badge" data-voluser="${safeVoiceUser}" title="Громкость пользователя">🔊 ${userVol}%</button>` : ""}
                 `;
                 if (!isMe) {
                   row.querySelector(".vc-vol-badge")?.addEventListener("click", (e) => {
@@ -6697,7 +8008,7 @@ goto loop`;
             Object.values(vData).forEach(v => {
               if (!v || !v.roomId || !v.user) return;
               if (v.ts && nowMesh - v.ts > 20000) return;
-              if (v.roomId === currentVoiceRoom.id && v.user.toLowerCase() !== currentUser.name.toLowerCase()) {
+              if (v.roomId === currentVoiceRoom.id && v.user.toLowerCase() !== voiceSyncName.toLowerCase()) {
                 peersInMyRoom.push(v.user);
               }
             });
@@ -6712,11 +8023,13 @@ goto loop`;
 
             // Устанавливаем и опрашиваем WebRTC-соединение с каждым тиммейтом в комнате
             for (const peerName of peersInMyRoom) {
-              const isInitiator = currentUser.name.toLowerCase() < peerName.toLowerCase();
+              const isInitiator = voiceSyncName.toLowerCase() < peerName.toLowerCase();
               if (!activePeerConnections[peerName]) {
                 await ensureWebRtcPeerConnection(peerName, isInitiator, false);
+                if (currentUser !== voiceSyncUser) return;
               }
               await pollWebRtcSignalingForPeer(peerName, false);
+              if (currentUser !== voiceSyncUser) return;
             }
 
             const peersDiag = document.getElementById("rtcDiagPeers");
@@ -6728,25 +8041,30 @@ goto loop`;
 
         // REAL-TIME HEARTBEAT PRESENCE: ping current user active timestamp
         const now = Date.now();
+        if (currentUser !== voiceSyncUser) return;
         const myDeviceLabel = isMobileViewport() ? "📱 Android" : "💻 ПК";
-        fetch(`${DB_URL}/presence_v24/${encodeURIComponent(currentUser.name)}.json`, {
+        fetchWithTimeout(`${DB_URL}/presence_v24/${encodeURIComponent(voiceSyncName)}.json`, {
           method: "PUT", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            user: currentUser.name,
+            user: voiceSyncName,
             lastSeen: now,
             status: currentUser.status || "В сети",
             device: myDeviceLabel,
             game: (currentUser.game && currentUser.game !== 'NONE' && currentUser.game !== 'Нет игры') ? currentUser.game : null,
             gameTs: currentUser.game ? now : null
           })
-        }).catch(() => {});
+        }, 8000).catch(() => {});
 
         // Fetch real active presence
-        const pRes = await fetch(`${DB_URL}/presence_v24.json`);
-        const aRes = await fetch(`${DB_URL}/accounts.json`);
+        const pRes = await fetchWithTimeout(`${DB_URL}/presence_v24.json`, { cache: "no-store" }, 8000);
+        if (currentUser !== voiceSyncUser) return;
+        const aRes = await fetchWithTimeout(`${DB_URL}/accounts.json`, { cache: "no-store" }, 8000);
+        if (currentUser !== voiceSyncUser) return;
         if (aRes.ok) {
           const aData = await aRes.json();
+          if (currentUser !== voiceSyncUser) return;
           const pData = (pRes.ok ? await pRes.json() : {}) || {};
+          if (currentUser !== voiceSyncUser) return;
           window.livePresenceMap = pData;
           refreshAllSidebarDmStatuses();
           if (friendsHubView.style.display !== "none") renderFriendsHub();
@@ -6760,7 +8078,7 @@ goto loop`;
             const onlineBadgesHtml = [];
             allAccounts.forEach(acc => {
               const pInfo = getPresenceEntry(acc.name);
-              const isMe = acc.name.toLowerCase() === currentUser.name.toLowerCase();
+              const isMe = acc.name.toLowerCase() === voiceSyncName.toLowerCase();
               const isOn = isMe ? (currentUser.status !== "Невидимка") : (pInfo && pInfo.lastSeen && pInfo.status !== "Невидимка" && (now - pInfo.lastSeen < 45000));
               if (isOn) {
                 totalOnlineGlobal++;
@@ -6941,15 +8259,17 @@ goto loop`;
           chatDraft: chatInput ? chatInput.value : "",
           ts: Date.now()
         };
-        safeSet("markens_update_restore_state", JSON.stringify(state));
+        safeSet(getAccountScopedStorageKey("markens_update_restore_state", currentUser.name), JSON.stringify(state));
       } catch (e) {}
     }
 
     function restoreUiStateAfterUpdate() {
       try {
-        const raw = safeGet("markens_update_restore_state");
+        if (!currentUser || !currentUser.name || currentUser.isAuthenticated !== true) return;
+        const restoreKey = getAccountScopedStorageKey("markens_update_restore_state", currentUser.name);
+        const raw = safeGet(restoreKey);
         if (!raw) return;
-        safeRemove("markens_update_restore_state");
+        safeRemove(restoreKey);
         const st = JSON.parse(raw);
         if (!st || (Date.now() - (st.ts || 0) > 120000)) return;
 
@@ -7680,21 +9000,31 @@ goto loop`;
     }
 
     // --- ARROW UP TO EDIT LAST MESSAGE ---
-    chatInput.addEventListener("keydown", (e) => {
+    chatInput.addEventListener("keydown", async (e) => {
       if (e.key === "ArrowUp" && !chatInput.value.trim()) {
-        const msgs = localChannelStore[activeChannel] || [];
-        const myLast = [...msgs].reverse().find(m => m.sender === currentUser.name && m.text);
+        const editChannel = activeChannel;
+        const editIsDm = isDmChat;
+        const msgs = localChannelStore[editChannel] || [];
+        const myLast = [...msgs].reverse().find(m => m && m.sender === currentUser.name && m.text);
         if (myLast) {
           e.preventDefault();
-          const newText = prompt("Изменить последнее сообщение:", myLast.text);
+          const currentText = getPlainChatMessageText(myLast, editChannel, editIsDm);
+          const newText = prompt("Изменить последнее сообщение:", currentText);
           if (newText !== null && newText.trim()) {
-            myLast.text = newText.trim();
+            const nextText = String(newText).trim().slice(0, 4000);
+            myLast.text = nextText;
+            myLast.e2ee = editIsDm || !!myLast.e2ee;
+            myLast._localDm = editIsDm;
             myLast.edited = true;
             saveLocalStore();
-            renderChatMessages(localChannelStore[activeChannel]);
-            fetch(`${DB_URL}/channels_v22/${encodeURIComponent(activeChannel)}/${myLast.id}.json`, {
-              method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: myLast.text, edited: true })
-            }).catch(() => {});
+            if (activeChannel === editChannel) renderChatMessages(localChannelStore[editChannel] || []);
+            const saved = await patchEditedChatMessage(editChannel, myLast, editIsDm);
+            if (saved) delete myLast.editPending;
+            else {
+              myLast.editPending = true;
+              retryPendingChatMessages(editChannel);
+            }
+            saveLocalStore();
           }
         }
       }
@@ -8030,13 +9360,23 @@ goto loop`;
       return s;
     }
 
+    function getPlainChatMessageText(message, channelKey = activeChannel, directMessage = isDmChat) {
+      if (!message || typeof message.text !== "string") return "";
+      if (directMessage && message.e2ee) return decryptDmPayload(message.text, channelKey);
+      return message.text;
+    }
+
     function startReplyToMessage(msg) {
-      if (!msg) return;
+      if (!msg || typeof msg !== "object") return;
       window.activeReplyTarget = msg;
+      window.__activeReplyChannel = activeChannel;
       const banner = document.getElementById("replyComposeBanner");
       const txt = document.getElementById("replyBannerText");
       if (banner && txt) {
-        txt.innerHTML = `Ответ пользователю <b>@${msg.sender}</b>: ${(msg.text || "Вложение").slice(0, 45)}`;
+        const sender = typeof msg.sender === "string" ? msg.sender.slice(0, 64) : "Участник";
+        const previewText = getPlainChatMessageText(msg, activeChannel, isDmChat);
+        const preview = previewText.slice(0, 45) || "Вложение";
+        txt.innerHTML = `Ответ пользователю <b>@${escapeHtml(sender)}</b>: ${escapeHtml(preview)}`;
         banner.style.display = "flex";
       }
       document.getElementById("chatInput")?.focus();
@@ -8044,6 +9384,7 @@ goto loop`;
 
     function cancelReplyMode() {
       window.activeReplyTarget = null;
+      window.__activeReplyChannel = null;
       const banner = document.getElementById("replyComposeBanner");
       if (banner) banner.style.display = "none";
     }
@@ -8083,7 +9424,7 @@ goto loop`;
         card.className = "pin-card";
         card.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-weight:700;color:var(--text-header);font-size:0.84rem;">${m.sender}</span>
+            <span style="font-weight:700;color:var(--text-header);font-size:0.84rem;">${escapeHtml(String(m.sender || "Участник").slice(0, 64))}</span>
             <button class="unpin-btn" style="background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:0.75rem;" title="Открепить">✕</button>
           </div>
           <div style="font-size:0.85rem;color:var(--text-normal);word-break:break-word;">${formatChatMarkdown(m.text || "Вложение")}</div>
@@ -8294,8 +9635,8 @@ goto loop`;
 
     function isCurrentUserInVortex() {
       if (!currentUser || !currentUser.name) return false;
-      if (currentUser.name.toLowerCase() === "markens" || currentUser.isOwner) return true;
-      return !!(currentUser.joinedVortex || currentUser.vortexAccepted_v25 || safeGet("vortex_accepted_v25_" + currentUser.name.toLowerCase()) === "1");
+      if (verifyCreatorPrivilege()) return true;
+      return !!(currentUser.joinedVortex || currentUser.vortexAccepted_v25 || safeGet(getAccountScopedStorageKey("vortex_accepted_v25", currentUser.name)) === "1");
     }
 
     function isViewingVortexServer() {
@@ -8308,7 +9649,7 @@ goto loop`;
         return { title: "Создатель", cls: "rank-creator-overlord", icon: "👑", isCreatorOnly: true };
       }
       const customRankTitle = (username && username.toLowerCase() === currentUser.name.toLowerCase())
-        ? safeGet("markens_custom_rank_" + username.toLowerCase())
+        ? safeGet(getAccountScopedStorageKey("markens_custom_rank", username))
         : null;
       if (customRankTitle) {
         const found = VORTEX_RANKS_PROGRESSION.find(r => r.title === customRankTitle);
@@ -8322,7 +9663,7 @@ goto loop`;
     }
 
     function initUserXpAndRank() {
-      const isOwn = currentUser.name && currentUser.name.toLowerCase() === "markens";
+      const isOwn = verifyCreatorPrivilege();
       if (isOwn) {
         // Creator markens has NO XP accumulation and NO LVL numbers — just 👑 Создатель
         currentUser.level = null;
@@ -8331,9 +9672,9 @@ goto loop`;
         refreshXpUI();
         return;
       }
-      const savedXp = safeGet("markens_xp_" + (currentUser.name || "user").toLowerCase());
-      const savedLvl = safeGet("markens_lvl_" + (currentUser.name || "user").toLowerCase());
-      let savedBadge = safeGet("markens_badge_" + (currentUser.name || "user").toLowerCase());
+      const savedXp = safeGet(getAccountScopedStorageKey("markens_xp", currentUser.name));
+      const savedLvl = safeGet(getAccountScopedStorageKey("markens_lvl", currentUser.name));
+      let savedBadge = safeGet(getAccountScopedStorageKey("markens_badge", currentUser.name));
       if (savedBadge === "👑") savedBadge = "🎯";
 
       currentUser.level = savedLvl ? parseInt(savedLvl, 10) : 3;
@@ -8343,13 +9684,14 @@ goto loop`;
     }
 
     function getSenderBadgeIcon(m) {
-      if (!m || !m.sender) return "";
-      const isMarkens = m.sender.toLowerCase() === "markens";
+      const sender = m && typeof m.sender === "string" ? m.sender : "";
+      if (!sender) return "";
+      const isMarkens = sender.toLowerCase() === "markens";
       if (isMarkens) return "👑 ";
       if (isDmChat || !isCurrentUserInVortex()) return "";
-      if (m.sender === "Steam PatchBot") return "🤖 ";
-      const b = (m.senderBadge && m.senderBadge !== "👑") ? m.senderBadge : "🎯";
-      return b + " ";
+      if (sender === "Steam PatchBot") return "🤖 ";
+      const rawBadge = (typeof m.senderBadge === "string" && m.senderBadge !== "👑") ? m.senderBadge : "🎯";
+      return escapeHtml(rawBadge.slice(0, 12)) + " ";
     }
 
     function getSenderRankPillHtml(m) {
@@ -8398,8 +9740,8 @@ goto loop`;
         leveledUp = true;
       }
       const uKey = (currentUser.name || "user").toLowerCase();
-      safeSet("markens_xp_" + uKey, String(currentUser.xp));
-      safeSet("markens_lvl_" + uKey, String(currentUser.level));
+      safeSet(getAccountScopedStorageKey("markens_xp", currentUser.name), String(currentUser.xp));
+      safeSet(getAccountScopedStorageKey("markens_lvl", currentUser.name), String(currentUser.level));
       saveSessionPermanently(currentUser);
       refreshXpUI();
       if (leveledUp) {
@@ -8449,7 +9791,7 @@ goto loop`;
           dockNameEl.textContent = `👑 ${currentUser.name}`;
         } else if (inVortex && isViewingVortexServer()) {
           const rk = getVortexRankInfo(currentUser.level || 3, currentUser.name);
-          dockNameEl.innerHTML = `${currentUser.badge || "🎯"} ${escapeHtml(currentUser.name)} <span class="vortex-rank-pill" style="margin-left:4px;">${escapeHtml(rk.title)}</span>`;
+          dockNameEl.innerHTML = `${escapeHtml(String(currentUser.badge || "🎯").slice(0, 12))} ${escapeHtml(currentUser.name)} <span class="vortex-rank-pill" style="margin-left:4px;">${escapeHtml(rk.title)}</span>`;
         } else {
           dockNameEl.textContent = currentUser.name;
         }
@@ -8500,7 +9842,7 @@ goto loop`;
               const ic = btn.getAttribute("data-badge");
               const rl = btn.getAttribute("data-ranklabel");
               if (!isOwn && rl) {
-                safeSet("markens_custom_rank_" + currentUser.name.toLowerCase(), rl);
+                safeSet(getAccountScopedStorageKey("markens_custom_rank", currentUser.name), rl);
               }
               window.selectVortexBadge(ic);
             };
@@ -8514,7 +9856,7 @@ goto loop`;
       if (badgeIcon === "👑" && !currentUser.isOwner) return;
       currentUser.badge = badgeIcon;
       const uKey = (currentUser.name || "user").toLowerCase();
-      safeSet("markens_badge_" + uKey, badgeIcon);
+      safeSet(getAccountScopedStorageKey("markens_badge", currentUser.name), badgeIcon);
       saveSessionPermanently(currentUser);
       refreshXpUI();
       renderChatMessages(localChannelStore[activeChannel] || []);
@@ -8879,10 +10221,20 @@ goto loop
     }
 
     // 4. Cross-Device Cloud Sync (Windows <-> Android) for Avatar, Bio, Theme, Status & Badge
+    function getCrossDeviceProfileUrl(username) {
+      const identity = typeof username === "string" ? username.trim() : "";
+      if (!identity) return null;
+      // Account names are case-sensitive in /accounts. Keep profile paths case-sensitive too:
+      // lowercasing here made "Alex" and "alex" share one cloud profile record.
+      return `${DB_URL}/user_prefs_v26/${encodeURIComponent(identity)}.json`;
+    }
+
     async function pushCrossDeviceProfileToCloud() {
-      if (!currentUser || !currentUser.name) return;
+      if (!currentUser || currentUser.isAuthenticated !== true || !currentUser.name) return;
+      const profileUrl = getCrossDeviceProfileUrl(currentUser.name);
+      if (!profileUrl) return;
       try {
-        await fetch(`${DB_URL}/user_prefs_v26/${encodeURIComponent(currentUser.name.toLowerCase())}.json`, {
+        await fetch(profileUrl, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -8898,39 +10250,47 @@ goto loop
       } catch (e) {}
     }
 
-    let __isPullingPrefs = false;
+    const __pullingPrefsUsers = new Set();
     async function pullCrossDeviceProfileFromCloud() {
       if (document.visibilityState !== "visible") return;
-      if (!currentUser || !currentUser.name) return;
-      if (__isPullingPrefs) return;
-      __isPullingPrefs = true;
+      if (!currentUser || currentUser.isAuthenticated !== true || !currentUser.name) return;
+      const prefsUser = currentUser;
+      if (__pullingPrefsUsers.has(prefsUser)) return;
+      __pullingPrefsUsers.add(prefsUser);
       try {
-        const res = await fetch(`${DB_URL}/user_prefs_v26/${encodeURIComponent(currentUser.name.toLowerCase())}.json`);
+        const prefsUrl = getCrossDeviceProfileUrl(prefsUser.name);
+        if (!prefsUrl) return;
+        const res = await fetchWithTimeout(prefsUrl, { cache: "no-store" }, 8000);
+        if (currentUser !== prefsUser) return;
         if (!res.ok) return;
         const prefs = await res.json();
+        if (currentUser !== prefsUser) return;
         if (!prefs || typeof prefs !== "object" || prefs.error) return;
 
         let changed = false;
-        if (prefs.avatar && prefs.avatar !== currentUser.avatar) {
-          currentUser.avatar = prefs.avatar;
-          document.querySelector("#dockAvatar").innerHTML = `<img src="${prefs.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot" id="dockStatusDot"></span>`;
-          document.querySelector("#rpAvatar").innerHTML = `<img src="${prefs.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot"></span>`;
+        if (typeof prefs.avatar === "string" && isSafeAvatarUrl(prefs.avatar) && prefs.avatar !== prefsUser.avatar) {
+          const safeAvatarUrl = escapeHtml(prefs.avatar.trim());
+          prefsUser.avatar = prefs.avatar.trim();
+          const dockAvatar = document.querySelector("#dockAvatar");
+          const profileAvatar = document.querySelector("#rpAvatar");
+          if (dockAvatar) dockAvatar.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot" id="dockStatusDot"></span>`;
+          if (profileAvatar) profileAvatar.innerHTML = `<img src="${safeAvatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" /><span class="status-dot"></span>`;
           changed = true;
         }
-        if (prefs.bio !== undefined && prefs.bio !== currentUser.bio) {
-          currentUser.bio = prefs.bio;
+        if (prefs.bio !== undefined && prefs.bio !== prefsUser.bio) {
+          prefsUser.bio = prefs.bio;
           const inpBio = document.getElementById("inpProfileBio");
           if (inpBio && document.activeElement !== inpBio) inpBio.value = prefs.bio;
           changed = true;
         }
-        if (prefs.badge && prefs.badge !== currentUser.badge && (currentUser.isOwner || prefs.badge !== "👑")) {
-          currentUser.badge = prefs.badge;
+        if (prefs.badge && prefs.badge !== prefsUser.badge && (prefsUser.isOwner || prefs.badge !== "👑")) {
+          prefsUser.badge = prefs.badge;
           changed = true;
         }
-        if (prefs.status && prefs.status !== currentUser.status) {
-          currentUser.status = prefs.status;
+        if (prefs.status && prefs.status !== prefsUser.status) {
+          prefsUser.status = prefs.status;
           const dockSub = document.getElementById("dockSub");
-          if (dockSub && (!currentUser.game || currentUser.game === "NONE")) dockSub.textContent = prefs.status;
+          if (dockSub && (!prefsUser.game || prefsUser.game === "NONE")) dockSub.textContent = prefs.status;
           const dot = document.getElementById("dockStatusDot");
           if (dot) {
             const stCls = (prefs.status === "Не активен") ? "idle" : ((prefs.status === "Не беспокоить") ? "dnd" : ((prefs.status === "Невидимка") ? "offline" : ""));
@@ -8946,10 +10306,12 @@ goto loop
           }
         }
         if (changed) {
-          saveSessionPermanently(currentUser);
+          saveSessionPermanently(prefsUser);
           refreshXpUI();
         }
-      } catch (e) {} finally { __isPullingPrefs = false; }
+      } catch (e) {} finally {
+        __pullingPrefsUsers.delete(prefsUser);
+      }
     }
 
     // Hook profile/theme/avatar changes to push immediately to cloud so Android & PC stay in sync

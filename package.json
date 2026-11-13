@@ -1,7 +1,7 @@
 {
   "name": "markens-messenger",
-  "version": "31.0.0",
-  "description": "MARKENS Messenger v31.0 — Глобальное обновление: студийные звонки WebRTC Mesh + Opus HD, защита E2EE и кастомные роли VORTEX (Windows 10/11 x64)",
+  "version": "31.10.16",
+  "description": "MARKENS Messenger v31.10.16 — исправления авторизации, изоляции аккаунтов, доставки сообщений и надёжности звонков (Windows 10/11 x64)",
   "main": "main.js",
   "author": "markens",
   "license": "MIT",
