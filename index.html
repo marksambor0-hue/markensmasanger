@@ -4658,34 +4658,83 @@
     async function sendFriendRequest() {
       const inp = document.getElementById("inpFriendNick");
       const fb = document.getElementById("friendReqFeedback");
-      const rawNick = inp.value.trim();
+      const showFeedback = (color, message) => {
+        if (!fb) return;
+        fb.style.display = "block";
+        fb.style.color = color;
+        fb.textContent = message;
+      };
+      if (!inp || !currentUser || currentUser.isAuthenticated !== true || !currentUser.name) {
+        showFeedback("var(--red)", "Войдите в аккаунт, чтобы добавлять друзей.");
+        return;
+      }
+
+      const rawNick = String(inp.value || "").trim();
       const nick = rawNick.replace(/[<>]/g, "").trim();
       if (!nick) return;
+      if (nick.length > 32 || !isValidFirebaseAccountKey(nick)) {
+        showFeedback("var(--red)", "Некорректный никнейм. Проверьте длину и допустимые символы.");
+        return;
+      }
+
+      const senderUser = currentUser;
+      const senderName = senderUser.name;
+      if (nick.toLowerCase() === senderName.toLowerCase()) {
+        showFeedback("var(--red)", "Нельзя добавить самого себя.");
+        return;
+      }
       if (Date.now() - __lastFriendReqTs < 400) return;
       __lastFriendReqTs = Date.now();
-      if (nick.toLowerCase() === currentUser.name.toLowerCase()) {
-        fb.style.display = "block"; fb.style.color = "var(--red)"; fb.textContent = "Нельзя добавить самого себя."; return;
-      }
-      inp.value = "";
-      if (!myFriends.includes(nick)) {
-        myFriends.push(nick);
-        safeSet(getAccountScopedStorageKey("markens_friends_clean"), JSON.stringify(myFriends));
-      }
-      fb.style.display = "block";
-      fb.style.color = "var(--green)";
-      fb.textContent = `Запрос дружбы отправлен игроку ${nick}. Друг добавлен в список!`;
-      renderFriendsHub();
 
+      let requestCreated = false;
+      showFeedback("var(--text-muted)", `Отправка запроса игроку ${nick}...`);
       try {
-        await fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(nick)}/${encodeURIComponent(currentUser.name)}.json`, {
-          method: "PUT", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ from: currentUser.name, to: nick, ts: Date.now() })
-        });
-        await fetch(`${DB_URL}/friends_v22/${encodeURIComponent(currentUser.name)}/${encodeURIComponent(nick)}.json`, {
-          method: "PUT", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: nick, ts: Date.now() })
-        });
-      } catch (e) {}
+        const requestResponse = await fetchWithTimeout(
+          `${DB_URL}/friend_requests_v24/${encodeURIComponent(nick)}/${encodeURIComponent(senderName)}.json`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ from: senderName, to: nick, ts: Date.now() })
+          },
+          8000
+        );
+        if (!requestResponse || !requestResponse.ok) {
+          throw new Error("Friend request write was rejected");
+        }
+        requestCreated = true;
+
+        const friendResponse = await fetchWithTimeout(
+          `${DB_URL}/friends_v22/${encodeURIComponent(senderName)}/${encodeURIComponent(nick)}.json`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: nick, ts: Date.now() })
+          },
+          8000
+        );
+        if (!friendResponse || !friendResponse.ok) {
+          throw new Error("Friend list write was rejected");
+        }
+
+        // A request started by one account may finish after the user switches accounts.
+        // Complete the captured account's cloud writes, but never mutate the new account's UI/cache.
+        if (currentUser !== senderUser) return;
+        if (!myFriends.includes(nick)) {
+          myFriends.push(nick);
+          safeSet(getAccountScopedStorageKey("markens_friends_clean", senderName), JSON.stringify(myFriends));
+        }
+        inp.value = "";
+        showFeedback("var(--green)", `Запрос дружбы отправлен игроку ${nick}. Друг добавлен в список!`);
+        renderFriendsHub();
+      } catch (_error) {
+        if (currentUser !== senderUser) return;
+        showFeedback(
+          "var(--red)",
+          requestCreated
+            ? "Запрос отправлен, но список друзей не удалось синхронизировать. Повторите попытку позже."
+            : "Не удалось отправить запрос дружбы. Проверьте интернет и попробуйте ещё раз."
+        );
+      }
     }
 
     document.getElementById("btnSendFriendReq").onclick = sendFriendRequest;
