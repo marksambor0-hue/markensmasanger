@@ -82,20 +82,13 @@ test('Electron main-process version fallbacks match the packaged app version', (
 });
 
 test('release version bump synchronizes preload and Electron main-process fallbacks', () => {
-  const workflow = fs.readFileSync(path.join(root, '.github/workflows/build-windows.yml'), 'utf8').replace(/\r\n/g, '\n');
-  assert.match(workflow, /preloadFallbackPattern/);
-  assert.match(workflow, /mainReadFallbackPattern/);
-  assert.match(workflow, /mainUpdaterFallbackPattern/);
-});
-
-test('Windows release version bump synchronizes every runtime version marker', async () => {
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/build-windows.yml'), 'utf8');
-  const marker = '          script: |\n';
-  const markerIndex = workflow.indexOf(marker);
+  const workflowLines = workflow.split(/\r?\n/);
+  const markerIndex = workflowLines.findIndex(line => line.trim() === 'script: |');
   assert.ok(markerIndex >= 0, 'Windows release workflow must contain its version calculation script');
 
   const scriptLines = [];
-  for (const line of workflow.slice(markerIndex + marker.length).split(/\r?\n/)) {
+  for (const line of workflowLines.slice(markerIndex + 1)) {
     if (!line.trim()) {
       scriptLines.push('');
       continue;
