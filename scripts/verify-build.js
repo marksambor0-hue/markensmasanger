@@ -1446,8 +1446,8 @@ test('friend request is not cached until both Firebase writes succeed', async ()
   await send();
 
   assert.equal(calls.length, 2, 'both cloud writes should be attempted');
-  assert.match(calls[0].url, /friend_requests_v24\/bob\/alice\.json$/);
-  assert.match(calls[1].url, /friends_v22\/alice\/bob\.json$/);
+  assert.ok(calls[0].url.endsWith("/friend_requests_v24/bob/alice.json"));
+  assert.ok(calls[1].url.endsWith("/friends_v22/alice/bob.json"));
   assert.deepEqual(friends, [], 'do not cache a friend if the second cloud write failed');
   assert.equal(saves, 0);
   assert.equal(input.value, 'bob');
