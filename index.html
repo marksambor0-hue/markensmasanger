@@ -4534,6 +4534,94 @@
       row.click();
     }
 
+    function showFriendInviteActionError(message) {
+      const feedback = document.getElementById("friendReqFeedback");
+      if (!feedback) return;
+      feedback.style.display = "block";
+      feedback.style.color = "var(--red)";
+      feedback.textContent = message;
+    }
+
+    async function acceptFriendInvite(friendName) {
+      const inviteName = typeof friendName === "string" ? friendName.trim().slice(0, 64) : "";
+      const inviteUser = currentUser;
+      if (!inviteName || !inviteUser || inviteUser.isAuthenticated !== true || !inviteUser.name) return false;
+
+      const accountName = inviteUser.name;
+      const invitesSnapshot = Array.isArray(pendingInvites) ? pendingInvites.slice() : [];
+      const friendsSnapshot = Array.isArray(myFriends) ? myFriends.slice() : [];
+      try {
+        const friendResponse = await fetchWithTimeout(
+          `${DB_URL}/friends_v22/${encodeURIComponent(accountName)}/${encodeURIComponent(inviteName)}.json`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: inviteName, ts: Date.now() })
+          },
+          8000
+        );
+        if (!friendResponse || !friendResponse.ok) throw new Error("Friend relationship write was rejected");
+
+        const requestResponse = await fetchWithTimeout(
+          `${DB_URL}/friend_requests_v24/${encodeURIComponent(accountName)}/${encodeURIComponent(inviteName)}.json`,
+          { method: "DELETE" },
+          8000
+        );
+        if (!requestResponse || !requestResponse.ok) throw new Error("Friend request removal was rejected");
+
+        // Persist against the account that initiated the action, even if another account
+        // became active while Firebase was processing the two writes.
+        const sourceInvites = currentUser === inviteUser && Array.isArray(pendingInvites) ? pendingInvites : invitesSnapshot;
+        const sourceFriends = currentUser === inviteUser && Array.isArray(myFriends) ? myFriends : friendsSnapshot;
+        const updatedInvites = sourceInvites.filter(invite => !invite || invite.from !== inviteName);
+        const updatedFriends = sourceFriends.includes(inviteName) ? sourceFriends : [...sourceFriends, inviteName];
+        safeSet(getAccountScopedStorageKey("markens_invites_clean", accountName), JSON.stringify(updatedInvites));
+        safeSet(getAccountScopedStorageKey("markens_friends_clean", accountName), JSON.stringify(updatedFriends));
+
+        if (currentUser !== inviteUser) return true;
+        pendingInvites = updatedInvites;
+        myFriends = updatedFriends;
+        renderFriendsHub();
+        openDmWithFriend(inviteName);
+        return true;
+      } catch (_error) {
+        if (currentUser === inviteUser) {
+          showFriendInviteActionError("Не удалось принять запрос дружбы. Запрос оставлен в списке — попробуйте ещё раз.");
+        }
+        return false;
+      }
+    }
+
+    async function declineFriendInvite(friendName) {
+      const inviteName = typeof friendName === "string" ? friendName.trim().slice(0, 64) : "";
+      const inviteUser = currentUser;
+      if (!inviteName || !inviteUser || inviteUser.isAuthenticated !== true || !inviteUser.name) return false;
+
+      const accountName = inviteUser.name;
+      const invitesSnapshot = Array.isArray(pendingInvites) ? pendingInvites.slice() : [];
+      try {
+        const response = await fetchWithTimeout(
+          `${DB_URL}/friend_requests_v24/${encodeURIComponent(accountName)}/${encodeURIComponent(inviteName)}.json`,
+          { method: "DELETE" },
+          8000
+        );
+        if (!response || !response.ok) throw new Error("Friend request removal was rejected");
+
+        const sourceInvites = currentUser === inviteUser && Array.isArray(pendingInvites) ? pendingInvites : invitesSnapshot;
+        const updatedInvites = sourceInvites.filter(invite => !invite || invite.from !== inviteName);
+        safeSet(getAccountScopedStorageKey("markens_invites_clean", accountName), JSON.stringify(updatedInvites));
+        if (currentUser !== inviteUser) return true;
+        pendingInvites = updatedInvites;
+        renderFriendsHub();
+        return true;
+      } catch (_error) {
+        if (currentUser === inviteUser) {
+          showFriendInviteActionError("Не удалось отклонить запрос. Запрос оставлен в списке — попробуйте ещё раз.");
+        }
+        return false;
+      }
+    }
+
     function renderFriendsHub() {
       const pCount = pendingInvites.length;
       const railBadge = document.getElementById("railPendingBadge");
@@ -4581,25 +4669,11 @@
         `;
         item.querySelector(".accept").onclick = (e) => {
           e.stopPropagation();
-          pendingInvites = pendingInvites.filter(x => x.from !== inv.from);
-          safeSet(getAccountScopedStorageKey("markens_invites_clean"), JSON.stringify(pendingInvites));
-          if (!myFriends.includes(inv.from)) {
-            myFriends.push(inv.from);
-            safeSet(getAccountScopedStorageKey("markens_friends_clean"), JSON.stringify(myFriends));
-          }
-          fetch(`${DB_URL}/friends_v22/${encodeURIComponent(currentUser.name)}/${encodeURIComponent(inv.from)}.json`, {
-            method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: inv.from, ts: Date.now() })
-          }).catch(() => {});
-          fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(currentUser.name)}/${encodeURIComponent(inv.from)}.json`, { method: "DELETE" }).catch(() => {});
-          renderFriendsHub();
-          openDmWithFriend(inv.from);
+          acceptFriendInvite(inviteName);
         };
         item.querySelector(".decline").onclick = (e) => {
           e.stopPropagation();
-          pendingInvites = pendingInvites.filter(x => x.from !== inv.from);
-          safeSet(getAccountScopedStorageKey("markens_invites_clean"), JSON.stringify(pendingInvites));
-          fetch(`${DB_URL}/friend_requests_v24/${encodeURIComponent(currentUser.name)}/${encodeURIComponent(inv.from)}.json`, { method: "DELETE" }).catch(() => {});
-          renderFriendsHub();
+          declineFriendInvite(inviteName);
         };
         pList.appendChild(item);
       });
