@@ -88,6 +88,70 @@ test('release version bump synchronizes preload and Electron main-process fallba
   assert.match(workflow, /mainUpdaterFallbackPattern/);
 });
 
+test('Windows release version bump synchronizes every runtime version marker', async () => {
+  const workflow = fs.readFileSync(path.join(root, '.github/workflows/build-windows.yml'), 'utf8');
+  const marker = '          script: |\n';
+  const markerIndex = workflow.indexOf(marker);
+  assert.ok(markerIndex >= 0, 'Windows release workflow must contain its version calculation script');
+
+  const scriptLines = [];
+  for (const line of workflow.slice(markerIndex + marker.length).split(/\r?\n/)) {
+    if (!line.trim()) {
+      scriptLines.push('');
+      continue;
+    }
+    const indentation = (line.match(/^ */) || [''])[0].length;
+    if (indentation < 12) break;
+    scriptLines.push(line.slice(12));
+  }
+  const scriptSource = scriptLines.join('\n').trim();
+  assert.ok(scriptSource.includes('const nextVersion ='), 'release script must calculate a next version');
+
+  const files = new Map([
+    ['package.json', JSON.stringify({ version: '31.10.16' })],
+    ['index.html', 'const CURRENT_SCRIPT_VERSION = "v31.10.16";\nconst CURRENT_SCRIPT_TS = 1794400001000;'],
+    ['preload.js', "let appVersion = '31.10.16';"],
+    ['main.js', "function readBundledVersion() { return 'v31.10.16'; }\nthis.currentVersion = normalizeVersionTag(options.currentVersion || BUNDLED_VERSION) || 'v31.10.16';"]
+  ]);
+  const fakeFs = {
+    readFileSync: filePath => files.get(String(filePath)),
+    writeFileSync: (filePath, content) => files.set(String(filePath), String(content))
+  };
+  const outputs = {};
+  await vm.runInNewContext('(async () => {\n' + scriptSource + '\n})()', {
+    require: moduleName => {
+      assert.equal(moduleName, 'fs');
+      return fakeFs;
+    },
+    github: {
+      rest: {
+        repos: {
+          getLatestRelease: async () => {
+            const error = new Error('Not Found');
+            error.status = 404;
+            throw error;
+          }
+        }
+      }
+    },
+    context: { repo: { owner: 'marksambor0-hue', repo: 'markensmasanger' } },
+    core: {
+      info: () => {},
+      setOutput: (key, value) => { outputs[key] = value; }
+    },
+    Date: { now: () => 1794400002000 }
+  });
+
+  assert.equal(JSON.parse(files.get('package.json')).version, '31.10.17');
+  assert.match(files.get('index.html'), /CURRENT_SCRIPT_VERSION = "v31\.10\.17"/);
+  assert.match(files.get('index.html'), /CURRENT_SCRIPT_TS = 1794400002000/);
+  assert.match(files.get('preload.js'), /let appVersion = '31\.10\.17'/);
+  assert.match(files.get('main.js'), /return 'v31\.10\.17'/);
+  assert.match(files.get('main.js'), /BUNDLED_VERSION\) \|\| 'v31\.10\.17'/);
+  assert.equal(outputs.version, '31.10.17');
+  assert.equal(outputs.tag, 'v31.10.17');
+});
+
 test('fetchWithTimeout keeps its abort deadline active while a response body is stalled', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const start = html.indexOf('async function fetchWithTimeout(');
