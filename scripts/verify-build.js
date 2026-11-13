@@ -1613,8 +1613,8 @@ test('accepting a friend invite updates local state only after both Firebase wri
   assert.equal(calls.length, 2);
   assert.ok(calls[0].url.endsWith('/friends_v22/alice/bob.json'));
   assert.ok(calls[1].url.endsWith('/friend_requests_v24/alice/bob.json'));
-  assert.deepEqual(context.pendingInvites, [{ from: 'carol' }]);
-  assert.deepEqual(context.myFriends, ['dave', 'bob']);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.pendingInvites)), [{ from: 'carol' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.myFriends)), ['dave', 'bob']);
   assert.equal(saves.length, 2);
   assert.equal(saves[0].key, 'markens_invites_clean::alice');
   assert.equal(saves[1].key, 'markens_friends_clean::alice');
