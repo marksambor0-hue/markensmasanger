@@ -1536,7 +1536,7 @@ test('friend request finishing after an account switch never writes into the new
   await inFlight;
 
   assert.equal(calls.length, 2);
-  assert.ok(calls.every(call => call.url.includes('/alice/')), 'both cloud writes must retain the initiating account path');
+  assert.match(calls[0].url, /friend_requests_v24\\/bob\\/alice\\.json$/);\n  assert.match(calls[1].url, /friends_v22\\/alice\\/bob\\.json$/);
   assert.deepEqual(bobFriends, [], 'the new account must not receive the previous account friend');
   assert.equal(saves, 0, 'the new account cache must not be persisted');
 });
