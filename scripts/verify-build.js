@@ -787,7 +787,7 @@ test('account sync times out stalled network reads and can retry on the next cyc
 test('account sync rejects an old A session response after logging out and back into the same account', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const syncStart = html.indexOf('async function syncAllData() {');
-  const syncEnd = html.indexOf("\\n    let __isSyncingVoice", syncStart);
+  const syncEnd = html.indexOf("\n    let __isSyncingVoice", syncStart);
   assert.ok(syncStart >= 0 && syncEnd > syncStart, 'account sync function must exist');
   const syncSource = html.slice(syncStart, syncEnd);
   const firstSession = { name: 'alice', isAuthenticated: true };
@@ -829,7 +829,7 @@ test('account sync rejects an old A session response after logging out and back 
 test('account sync allows a new account to sync while another account request is pending', async () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const syncStart = html.indexOf('async function syncAllData() {');
-  const syncEnd = html.indexOf("\\n    let __isSyncingVoice", syncStart);
+  const syncEnd = html.indexOf("\n    let __isSyncingVoice", syncStart);
   assert.ok(syncStart >= 0 && syncEnd > syncStart, 'account sync function must exist');
   const syncSource = html.slice(syncStart, syncEnd);
   const alice = { name: 'alice', isAuthenticated: true };
