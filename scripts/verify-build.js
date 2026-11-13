@@ -82,7 +82,7 @@ test('Electron main-process version fallbacks match the packaged app version', (
 });
 
 test('release version bump synchronizes preload and Electron main-process fallbacks', () => {
-  const workflow = fs.readFileSync(path.join(root, '.github/workflows/build-windows.yml'), 'utf8');
+  const workflow = fs.readFileSync(path.join(root, '.github/workflows/build-windows.yml'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(workflow, /preloadFallbackPattern/);
   assert.match(workflow, /mainReadFallbackPattern/);
   assert.match(workflow, /mainUpdaterFallbackPattern/);
