@@ -108,6 +108,23 @@ jobs:
             html = html.replace(timestampPattern, 'const CURRENT_SCRIPT_TS = ' + Date.now() + ';');
             fs.writeFileSync(htmlPath, html);
 
+            const preloadPath = 'preload.js';
+            let preload = fs.readFileSync(preloadPath, 'utf8');
+            const preloadFallbackPattern = /let\\s+appVersion\\s*=\\s*["']v?\\d+\\.\\d+\\.\\d+["']\\s*;/;
+            if (!preloadFallbackPattern.test(preload)) throw new Error('preload.js version fallback was not found');
+            preload = preload.replace(preloadFallbackPattern, "let appVersion = '" + nextVersion + "';");
+            fs.writeFileSync(preloadPath, preload);
+
+            const mainPath = 'main.js';
+            let main = fs.readFileSync(mainPath, 'utf8');
+            const mainReadFallbackPattern = /return\\s+["']v?\\d+\\.\\d+\\.\\d+["']\\s*;/;
+            const mainUpdaterFallbackPattern = /(normalizeVersionTag\\(options\\.currentVersion\\s*\\|\\|\\s*BUNDLED_VERSION\\)\\s*\\|\\|\\s*)["']v?\\d+\\.\\d+\\.\\d+["']/;
+            if (!mainReadFallbackPattern.test(main)) throw new Error('main.js bundled-version fallback was not found');
+            if (!mainUpdaterFallbackPattern.test(main)) throw new Error('main.js updater fallback was not found');
+            main = main.replace(mainReadFallbackPattern, "return 'v" + nextVersion + "';");
+            main = main.replace(mainUpdaterFallbackPattern, "$1'v" + nextVersion + "'");
+            fs.writeFileSync(mainPath, main);
+
             core.setOutput('version', nextVersion);
             core.setOutput('tag', 'v' + nextVersion);
             core.info('Next MARKENS release: v' + nextVersion + ' (higher of package.json and latest GitHub Release, then patch + 1).');
