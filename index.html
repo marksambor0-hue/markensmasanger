@@ -7861,41 +7861,57 @@ goto loop`;
     let __isSyncingAllData = false;
     async function syncAllData() {
       if (document.visibilityState !== "visible") return;
-      if (__isSyncingAllData) return;
-      const syncUserName = currentUser && typeof currentUser.name === "string" ? currentUser.name : "";
-      if (!syncUserName || !currentUser || currentUser.isAuthenticated !== true) return;
+      const syncUser = currentUser;
+      const syncUserName = syncUser && typeof syncUser.name === "string" ? syncUser.name : "";
+      if (!syncUserName || !syncUser || syncUser.isAuthenticated !== true) return;
 
+      // Lock by authenticated session object, not by a global flag or username.
+      // A -> B -> A creates a new session object even though the account name is the same.
+      const inFlightSessions = syncAllData.__markensInFlightSessions ||
+        (syncAllData.__markensInFlightSessions = new Set());
+      if (inFlightSessions.has(syncUser)) return;
+      const syncFriends = myFriends;
+      const syncInvites = pendingInvites;
+      const isCurrentSession = () =>
+        currentUser === syncUser &&
+        syncUser.isAuthenticated === true &&
+        syncUser.name === syncUserName &&
+        myFriends === syncFriends &&
+        pendingInvites === syncInvites;
+
+      inFlightSessions.add(syncUser);
       __isSyncingAllData = true;
       try {
         const fRes = await fetchWithTimeout(`${DB_URL}/friends_v22/${encodeURIComponent(syncUserName)}.json`, { cache: "no-store" }, 8000);
-        if (!currentUser || currentUser.name !== syncUserName) return;
-        if (fRes.ok) {
+        if (!isCurrentSession()) return;
+        if (fRes && fRes.ok) {
           const fData = await fRes.json();
-          if (!currentUser || currentUser.name !== syncUserName) return;
+          if (!isCurrentSession()) return;
           if (fData && typeof fData === "object" && !fData.error) {
-            Object.keys(fData).forEach(fn => { if (!myFriends.includes(fn)) myFriends.push(fn); });
-            safeSet(getAccountScopedStorageKey("markens_friends_clean", syncUserName), JSON.stringify(myFriends));
+            Object.keys(fData).forEach(fn => { if (!syncFriends.includes(fn)) syncFriends.push(fn); });
+            safeSet(getAccountScopedStorageKey("markens_friends_clean", syncUserName), JSON.stringify(syncFriends));
           }
         }
         const iRes = await fetchWithTimeout(`${DB_URL}/friend_requests_v24/${encodeURIComponent(syncUserName)}.json`, { cache: "no-store" }, 8000);
-        if (!currentUser || currentUser.name !== syncUserName) return;
-        if (iRes.ok) {
+        if (!isCurrentSession()) return;
+        if (iRes && iRes.ok) {
           const iData = await iRes.json();
-          if (!currentUser || currentUser.name !== syncUserName) return;
+          if (!isCurrentSession()) return;
           if (iData && typeof iData === "object" && !iData.error) {
             Object.values(iData).forEach(inv => {
-              if (inv && inv.from && !pendingInvites.some(x => x.from === inv.from)) pendingInvites.push(inv);
+              if (inv && inv.from && !syncInvites.some(x => x.from === inv.from)) syncInvites.push(inv);
             });
-            safeSet(getAccountScopedStorageKey("markens_invites_clean", syncUserName), JSON.stringify(pendingInvites));
+            safeSet(getAccountScopedStorageKey("markens_invites_clean", syncUserName), JSON.stringify(syncInvites));
           }
         }
       } catch (e) {
         console.warn("MARKENS account sync failed:", e);
       } finally {
-        if (currentUser && currentUser.name === syncUserName && friendsHubView.style.display !== "none") {
+        if (isCurrentSession() && friendsHubView.style.display !== "none") {
           try { renderFriendsHub(); } catch (e) {}
         }
-        __isSyncingAllData = false;
+        inFlightSessions.delete(syncUser);
+        __isSyncingAllData = inFlightSessions.size > 0;
       }
     }
 
