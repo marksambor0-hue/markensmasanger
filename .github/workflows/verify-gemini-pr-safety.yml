@@ -1,0 +1,32 @@
+name: Verify Gemini PR-only automation safety
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/markens-gemini-agent.yml'
+      - '.github/workflows/verify-gemini-pr-safety.yml'
+      - 'scripts/verify-build.js'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify Gemini review workflow
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run project and workflow regression checks
+        run: npm test
