@@ -208,6 +208,7 @@ test('updater waits for a downloaded newer version before installing', async () 
 });
 
 
+
 test('Gemini automation opens or updates a review PR without merging main', async () => {
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/markens-gemini-agent.yml'), 'utf8');
   assert.match(workflow, /^  open_pr:/m, 'Gemini automation must have a review-only PR job');
@@ -215,17 +216,18 @@ test('Gemini automation opens or updates a review PR without merging main', asyn
   assert.doesNotMatch(workflow, /git merge --no-ff/, 'Gemini automation must never merge its branch into main');
   assert.doesNotMatch(workflow, /git push origin ["']HEAD:\$\{DEFAULT_BRANCH\}/, 'Gemini automation must never push directly to main');
 
-  const jobStart = workflow.indexOf('  open_pr:\\n');
+  const newline = String.fromCharCode(10);
+  const jobStart = workflow.indexOf('  open_pr:' + newline);
   const scriptMarker = workflow.indexOf('          script: |', jobStart);
   assert.ok(jobStart >= 0 && scriptMarker > jobStart, 'review PR job must contain an executable GitHub script');
-  const lines = workflow.slice(scriptMarker).split(/\\r?\\n/).slice(1);
+  const lines = workflow.slice(scriptMarker).split(newline).slice(1);
   const scriptLines = [];
   for (const line of lines) {
     const indentation = (line.match(/^ */) || [''])[0].length;
     if (line.trim() && indentation < 12) break;
     scriptLines.push(line.trim() ? line.slice(12) : '');
   }
-  const scriptSource = scriptLines.join('\\n').trim();
+  const scriptSource = scriptLines.join(newline).trim();
   assert.ok(scriptSource.includes('github.rest.pulls.create'), 'new Gemini changes must create a pull request');
   assert.ok(scriptSource.includes('github.rest.pulls.update'), 'retries must update the existing pull request');
   assert.ok(scriptSource.includes('draft: false'), 'the review pull request must not be a draft');
@@ -256,7 +258,31 @@ test('Gemini automation opens or updates a review PR without merging main', asyn
         }
       }
     };
-    await vm.runInNewContext('(async () => {\\n' + scriptSource + '\\n})()', {
+    await vm.runInNewContext('(async () => {' + newline + scriptSource + newline + '})()', {
+      github,
+      context: { repo: { owner: 'owner', repo: 'repo' }, issue: { number: 42 }, runId: 123 },
+      process: { env: { BRANCH: 'ai/markens-issue-42-123', DEFAULT_BRANCH: 'main' } }
+    });
+    return calls;
+  };
+
+  const created = await runScript(null);
+  const createCall = created.find(call => call.action === 'create');
+  assert.ok(createCall, 'a missing review PR must be created');
+  assert.equal(createCall.args.head, 'ai/markens-issue-42-123');
+  assert.equal(createCall.args.base, 'main');
+  assert.equal(createCall.args.draft, false);
+  assert.equal(created.some(call => call.action === 'update'), false);
+  assert.match(createCall.args.body, /not merged/i);
+  assert.match(created.find(call => call.action === 'comment').args.body, /Автоматического слияния в main/);
+
+  const updated = await runScript({ number: 18, html_url: 'https://github.com/owner/repo/pull/18' });
+  assert.equal(updated.some(call => call.action === 'create'), false, 'a retry must not create a duplicate PR');
+  assert.equal(updated.find(call => call.action === 'update').args.pull_number, 18);
+  assert.ok(updated.find(call => call.action === 'comment').args.body.includes('/pull/18'));
+});
+
+(async () => {\\n' + scriptSource + '\\n})()', {
       github,
       context: { repo: { owner: 'owner', repo: 'repo' }, issue: { number: 42 }, runId: 123 },
       process: { env: { BRANCH: 'ai/markens-issue-42-123', DEFAULT_BRANCH: 'main' } }
