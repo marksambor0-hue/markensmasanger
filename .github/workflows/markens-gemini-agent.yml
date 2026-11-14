@@ -223,7 +223,7 @@ jobs:
               '**This PR is intentionally opened for review only. It is not merged, and no GitHub Release or OTA update is published by this workflow.**',
               '',
               'Please review the diff and runtime behavior before merging.'
-            ].join('\\n');
+            ].join(String.fromCharCode(10));
 
             let pr;
             if (existing.data.length > 0) {
