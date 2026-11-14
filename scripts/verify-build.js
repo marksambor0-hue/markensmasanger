@@ -209,6 +209,7 @@ test('updater waits for a downloaded newer version before installing', async () 
 
 
 
+
 test('Gemini automation opens or updates a review PR without merging main', async () => {
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/markens-gemini-agent.yml'), 'utf8');
   assert.match(workflow, /^  open_pr:/m, 'Gemini automation must have a review-only PR job');
@@ -275,29 +276,6 @@ test('Gemini automation opens or updates a review PR without merging main', asyn
   assert.equal(created.some(call => call.action === 'update'), false);
   assert.match(createCall.args.body, /not merged/i);
   assert.match(created.find(call => call.action === 'comment').args.body, /Автоматического слияния в main/);
-
-  const updated = await runScript({ number: 18, html_url: 'https://github.com/owner/repo/pull/18' });
-  assert.equal(updated.some(call => call.action === 'create'), false, 'a retry must not create a duplicate PR');
-  assert.equal(updated.find(call => call.action === 'update').args.pull_number, 18);
-  assert.ok(updated.find(call => call.action === 'comment').args.body.includes('/pull/18'));
-});
-
-(async () => {\\n' + scriptSource + '\\n})()', {
-      github,
-      context: { repo: { owner: 'owner', repo: 'repo' }, issue: { number: 42 }, runId: 123 },
-      process: { env: { BRANCH: 'ai/markens-issue-42-123', DEFAULT_BRANCH: 'main' } }
-    });
-    return calls;
-  };
-
-  const created = await runScript(null);
-  const createCall = created.find(call => call.action === 'create');
-  assert.ok(createCall, 'a missing review PR must be created');
-  assert.equal(createCall.args.head, 'ai/markens-issue-42-123');
-  assert.equal(createCall.args.base, 'main');
-  assert.equal(createCall.args.draft, false);
-  assert.equal(created.some(call => call.action === 'update'), false);
-  assert.ok(created.find(call => call.action === 'comment').args.body.includes('no' ) === false || created.length > 0);
 
   const updated = await runScript({ number: 18, html_url: 'https://github.com/owner/repo/pull/18' });
   assert.equal(updated.some(call => call.action === 'create'), false, 'a retry must not create a duplicate PR');
