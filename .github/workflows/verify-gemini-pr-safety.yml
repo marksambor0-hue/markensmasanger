@@ -1,6 +1,13 @@
 name: Verify Gemini PR-only automation safety
 
 on:
+  push:
+    branches:
+      - 'safety/gemini-pr-only-*'
+    paths:
+      - '.github/workflows/markens-gemini-agent.yml'
+      - '.github/workflows/verify-gemini-pr-safety.yml'
+      - 'scripts/verify-build.js'
   pull_request:
     branches:
       - main
