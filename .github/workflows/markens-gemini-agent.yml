@@ -188,43 +188,61 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  publish:
-    name: Publish verified source changes
+  open_pr:
+    name: Open a reviewable PR without merging
     needs: [agent, build_windows]
     if: needs.agent.outputs.changed == 'true' && needs.build_windows.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout the default branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-
-      - name: Merge the verified changes into the default branch
-        shell: bash
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          BRANCH: ${{ needs.agent.outputs.branch }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH"
-          git merge --no-ff "origin/$BRANCH" -m "chore: publish tested MARKENS change"
-          gh auth setup-git
-          git push origin "HEAD:${DEFAULT_BRANCH}"
-
-      - name: Report success on the request
+      - name: Create or update a normal pull request
         uses: actions/github-script@v7
+        env:
+          BRANCH: ${{ needs.agent.outputs.branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         with:
           script: |
-            const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = process.env.BRANCH;
+            const base = process.env.DEFAULT_BRANCH;
+            const head = owner + ':' + branch;
+            const existing = await github.rest.pulls.list({
+              owner, repo, state: 'open', base, head, per_page: 100
+            });
+            const title = 'MARKENS: verified changes from issue #' + context.issue.number;
+            const runUrl = 'https://github.com/' + owner + '/' + repo + '/actions/runs/' + context.runId;
+            const body = [
+              '## Automated change review',
+              '',
+              'Gemini generated these changes on an isolated branch. The Windows installer build and available project tests passed in the linked workflow run.',
+              '',
+              '- Source branch: `' + branch + '`',
+              '- Windows build and tests: passed',
+              '- Workflow run: ' + runUrl,
+              '',
+              '**This PR is intentionally opened for review only. It is not merged, and no GitHub Release or OTA update is published by this workflow.**',
+              '',
+              'Please review the diff and runtime behavior before merging.'
+            ].join(String.fromCharCode(10));
+
+            let pr;
+            if (existing.data.length > 0) {
+              pr = existing.data[0];
+              const updated = await github.rest.pulls.update({
+                owner, repo, pull_number: pr.number, title, body
+              });
+              pr = updated.data;
+            } else {
+              const created = await github.rest.pulls.create({
+                owner, repo, title, head: branch, base, body,
+                maintainer_can_modify: true, draft: false
+              });
+              pr = created.data;
+            }
+
             await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `✅ MARKENS: изменения проверены, Windows-сборка прошла, исходники опубликованы в основной ветке. Установщик и portable EXE находятся в Artifacts этого запуска: [открыть результат](${url}).`
+              owner, repo, issue_number: context.issue.number,
+              body: '✅ MARKENS: Windows-сборка и доступные тесты прошли. Открыт обычный PR для проверки: #' + pr.number + ' (' + pr.html_url + '). **Автоматического слияния в main и публикации релиза/OTA не было.**'
             });
 
   no_changes:
@@ -247,7 +265,7 @@ jobs:
 
   report_failure:
     name: Report a failed automation run
-    needs: [agent, build_windows, publish]
+    needs: [agent, build_windows, open_pr]
     if: failure()
     runs-on: ubuntu-latest
     steps:
@@ -260,5 +278,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `⚠️ MARKENS automation не завершилась успешно. Изменения не публикуются до успешной Windows-сборки. Открой журнал и пришли ошибку для исправления: [открыть Actions](${url}).`
+              body: `⚠️ MARKENS automation не завершилась успешно. Изолированная ветка не была автоматически объединена в main; проверь журнал выполнения. Открой журнал и пришли ошибку для исправления: [открыть Actions](${url}).`
             });
