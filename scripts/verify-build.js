@@ -211,7 +211,7 @@ test('updater waits for a downloaded newer version before installing', async () 
 
 
 test('Gemini automation opens or updates a review PR without merging main', async () => {
-  const workflow = fs.readFileSync(path.join(root, '.github/workflows/markens-gemini-agent.yml'), 'utf8');
+  const workflow = fs.readFileSync(path.join(root, '.github/workflows/markens-gemini-agent.yml'), 'utf8').split(/\r?\n/).join(String.fromCharCode(10));
   assert.match(workflow, /^  open_pr:/m, 'Gemini automation must have a review-only PR job');
   assert.doesNotMatch(workflow, /^  publish:/m, 'Gemini automation must not have an auto-publish job');
   assert.doesNotMatch(workflow, /git merge --no-ff/, 'Gemini automation must never merge its branch into main');
