@@ -1941,7 +1941,7 @@ test('DM call and signaling validators preserve case-sensitive Firebase account 
     from: 'Alice',
     to: 'Bob',
     type: 'offer',
-    sdp: 'v=0\\r\\nm=audio 9 UDP/TLS/RTP/SAVPF 111\\r\\n',
+    sdp: 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n',
     ts: now
   };
   assert.equal(validators.isValidPeerSdpMessage(message, 'Alice', 'Bob', now), true);
