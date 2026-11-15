@@ -6108,11 +6108,13 @@
     function isValidIncomingDmCall(call, callId, currentUserName, now = Date.now()) {
       if (!call || typeof call !== "object" || typeof callId !== "string") return false;
       if (typeof call.caller !== "string" || typeof call.callee !== "string") return false;
-      const caller = call.caller.trim().toLowerCase();
-      const callee = call.callee.trim().toLowerCase();
-      const current = String(currentUserName || "").trim().toLowerCase();
+      const caller = call.caller.trim();
+      const callee = call.callee.trim();
+      const current = String(currentUserName || "").trim();
       if (!caller || !callee || !current || caller === callee || caller === current || callee !== current) return false;
-      const expectedPairPrefix = [caller, callee].sort().join("_") + "_";
+      // Firebase account paths are case-sensitive. Keep exact identities for authorization;
+      // only normalize the legacy call-ID prefix because existing IDs were generated lowercase.
+      const expectedPairPrefix = [caller.toLowerCase(), callee.toLowerCase()].sort().join("_") + "_";
       if (!callId.toLowerCase().startsWith(expectedPairPrefix) ||
           callId.length <= expectedPairPrefix.length ||
           !/^\d{10,16}_[a-z0-9]{8,32}$/i.test(callId.slice(expectedPairPrefix.length))) return false;
@@ -6123,11 +6125,12 @@
 
     function isValidPeerSdpMessage(message, expectedPeerName, localUserName, now = Date.now()) {
       if (!message || typeof message !== "object") return false;
-      const expectedPeer = String(expectedPeerName || "").trim().toLowerCase();
-      const localUser = String(localUserName || "").trim().toLowerCase();
+      const expectedPeer = String(expectedPeerName || "").trim();
+      const localUser = String(localUserName || "").trim();
       if (!expectedPeer || !localUser) return false;
-      if (typeof message.from !== "string" || message.from.trim().toLowerCase() !== expectedPeer) return false;
-      if (typeof message.to !== "string" || message.to.trim().toLowerCase() !== localUser) return false;
+      // Signaling identities must match the exact case-sensitive Firebase account names.
+      if (typeof message.from !== "string" || message.from.trim() !== expectedPeer) return false;
+      if (typeof message.to !== "string" || message.to.trim() !== localUser) return false;
       if (!["offer", "answer"].includes(message.type)) return false;
       if (typeof message.sdp !== "string" || message.sdp.length < 10 || message.sdp.length > 65536) return false;
       if (!/^v=0(?:\r?\n)/.test(message.sdp) || !/(?:^|\r?\n)m=(?:audio|video)\s/m.test(message.sdp)) return false;
@@ -6629,7 +6632,7 @@
             const candidateLooksValid = candidateText !== null && (candidateText === "" || /^candidate:/i.test(candidateText));
             const itemTs = Number(item.ts);
             const itemIsFresh = Number.isFinite(itemTs) && itemTs <= iceNow + 5000 && iceNow - itemTs >= 0 && iceNow - itemTs <= 120000;
-            const senderMatches = typeof item.from === "string" && item.from.trim().toLowerCase() === peerName.toLowerCase();
+            const senderMatches = typeof item.from === "string" && item.from.trim() === peerName;
             if (!candidateLooksValid || !itemIsFresh || !senderMatches) continue;
             try {
               await pc.addIceCandidate(candidate);
@@ -6756,7 +6759,7 @@
         currentUser.name,
         Date.now()
       ) &&
-        String(liveCallRecord.caller).toLowerCase() === String(acceptedCall.peer).toLowerCase() &&
+        String(liveCallRecord.caller).trim() === String(acceptedCall.peer).trim() &&
         liveCallRecord.type === acceptedCall.type;
       if (!incomingStillValid) {
         acceptedCall.state = "failed";
