@@ -459,7 +459,7 @@ test('incoming call validation accepts unique per-attempt IDs only for the corre
   const start = html.indexOf('function isValidIncomingDmCall');
   const end = html.indexOf('function ', start + 20);
   const validator = html.slice(start, end);
-  assert.match(validator, /expectedPairPrefix = \[caller, callee\]\.sort\(\)\.join\("_"\) \+ "_"/);
+  assert.match(validator, /expectedPairPrefix = \[caller\.toLowerCase\(\), callee\.toLowerCase\(\)\]\.sort\(\)\.join\("_"\) \+ "_"/);
   assert.match(validator, /callId\.slice\(expectedPairPrefix\.length\)/);
   assert.match(validator, /\^\\d\{10,16\}_\[a-z0-9\]\{8,32\}\$/i);
 });
@@ -619,7 +619,7 @@ test('ICE candidate delivery retries idempotently and never silently drops a can
 
 test('remote ICE candidates must have a matching authenticated signaling peer name', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  assert.match(html, /const senderMatches = typeof item\.from === "string" && item\.from\.trim\(\)\.toLowerCase\(\) === peerName\.toLowerCase\(\)/);
+  assert.match(html, /const senderMatches = typeof item\.from === "string" && item\.from\.trim\(\) === peerName/);
   assert.match(html, /if \(!candidateLooksValid \|\| !itemIsFresh \|\| !senderMatches\) continue/);
 });
 
@@ -1915,6 +1915,40 @@ test('accepting a friend invite after an account switch persists only to the ini
   assert.deepEqual(saves.map(item => item.key), ['markens_invites_clean::alice', 'markens_friends_clean::alice']);
   assert.equal(renders, 0);
   assert.equal(opens, 0);
+});
+
+test('DM call and signaling validators preserve case-sensitive Firebase account identity', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const start = html.indexOf('function isValidIncomingDmCall');
+  const end = html.indexOf('function closePeerConnectionForUser', start);
+  assert.ok(start >= 0 && end > start, 'call identity validators must exist');
+  const source = html.slice(start, end);
+  const validators = vm.runInNewContext(source + '\n({ isValidIncomingDmCall, isValidPeerSdpMessage })', { Date });
+  const now = 1800000000000;
+  const call = {
+    caller: 'Alice',
+    callee: 'Bob',
+    state: 'calling',
+    type: 'voice',
+    ts: now
+  };
+  const callId = 'alice_bob_' + now + '_abcdef12345678';
+  assert.equal(validators.isValidIncomingDmCall(call, callId, 'Bob', now), true);
+  assert.equal(validators.isValidIncomingDmCall(call, callId, 'bob', now), false,
+    'a different case-sensitive account must not accept Bob\'s incoming call');
+
+  const message = {
+    from: 'Alice',
+    to: 'Bob',
+    type: 'offer',
+    sdp: 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n',
+    ts: now
+  };
+  assert.equal(validators.isValidPeerSdpMessage(message, 'Alice', 'Bob', now), true);
+  assert.equal(validators.isValidPeerSdpMessage(message, 'alice', 'Bob', now), false,
+    'a case-variant peer must not inject SDP into Alice\'s signaling session');
+  assert.equal(validators.isValidPeerSdpMessage(message, 'Alice', 'bob', now), false,
+    'a case-variant local account must not accept SDP addressed to Bob');
 });
 
 (async () => {
