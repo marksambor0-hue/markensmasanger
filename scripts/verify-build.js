@@ -459,7 +459,7 @@ test('incoming call validation accepts unique per-attempt IDs only for the corre
   const start = html.indexOf('function isValidIncomingDmCall');
   const end = html.indexOf('function ', start + 20);
   const validator = html.slice(start, end);
-  assert.match(validator, /expectedPairPrefix = \[caller, callee\]\.sort\(\)\.join\("_"\) \+ "_"/);
+  assert.match(validator, /expectedPairPrefix = \[caller\.toLowerCase\(\), callee\.toLowerCase\(\)\]\.sort\(\)\.join\("_"\) \+ "_"/);
   assert.match(validator, /callId\.slice\(expectedPairPrefix\.length\)/);
   assert.match(validator, /\^\\d\{10,16\}_\[a-z0-9\]\{8,32\}\$/i);
 });
@@ -619,7 +619,7 @@ test('ICE candidate delivery retries idempotently and never silently drops a can
 
 test('remote ICE candidates must have a matching authenticated signaling peer name', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  assert.match(html, /const senderMatches = typeof item\.from === "string" && item\.from\.trim\(\)\.toLowerCase\(\) === peerName\.toLowerCase\(\)/);
+  assert.match(html, /const senderMatches = typeof item\.from === "string" && item\.from\.trim\(\) === peerName/);
   assert.match(html, /if \(!candidateLooksValid \|\| !itemIsFresh \|\| !senderMatches\) continue/);
 });
 
