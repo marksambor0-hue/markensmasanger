@@ -1,0 +1,20 @@
+{
+  "productName": "MARKENS",
+  "version": "31.13.0",
+  "identifier": "com.markens.messenger",
+  "build": {
+    "frontendDist": "../"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MARKENS v31.13.0 (Rust Core)",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 940,
+        "minHeight": 600,
+        "resizable": true
+      }
+    ]
+  }
+}

@@ -1,49 +1,46 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-let appVersion = '31.0.0';
-try {
-  const pkg = require('./package.json');
-  if (pkg && typeof pkg.version === 'string') {
-    appVersion = pkg.version;
-  }
-} catch (_e) {}
-
 contextBridge.exposeInMainWorld('markensDesktop', {
   isDesktopApp: true,
   platform: process.platform,
-  version: appVersion,
-
-  // Глобальные горячие клавиши и детектор игр Steam
+  version: '31.21.0',
+  buildTs: 1801500000000,
   onToggleMic: (cb) => {
-    if (typeof cb !== 'function') return;
     ipcRenderer.removeAllListeners('markens:toggle-mic');
     ipcRenderer.on('markens:toggle-mic', () => cb());
   },
   onToggleDeaf: (cb) => {
-    if (typeof cb !== 'function') return;
     ipcRenderer.removeAllListeners('markens:toggle-deaf');
     ipcRenderer.on('markens:toggle-deaf', () => cb());
   },
   onToggleOverlay: (cb) => {
-    if (typeof cb !== 'function') return;
     ipcRenderer.removeAllListeners('markens:toggle-overlay');
     ipcRenderer.on('markens:toggle-overlay', () => cb());
   },
   onGameDetected: (cb) => {
-    if (typeof cb !== 'function') return;
     ipcRenderer.removeAllListeners('markens:game-detected');
     ipcRenderer.on('markens:game-detected', (_e, game) => cb(game));
   },
-
-  // Управление автообновлением через electron-updater (GitHub Releases)
-  onUpdateStatus: (cb) => {
-    if (typeof cb !== 'function') return;
-    ipcRenderer.removeAllListeners('markens:update-status');
-    ipcRenderer.on('markens:update-status', (_e, statusPayload) => cb(statusPayload));
+  onUpdaterStatus: (cb) => {
+    ipcRenderer.removeAllListeners('markens:updater-status');
+    ipcRenderer.on('markens:updater-status', (_e, statusObj) => cb(statusObj));
   },
-  getUpdateDiagnostics: () => ipcRenderer.invoke('markens:get-update-diagnostics'),
   checkForUpdates: () => ipcRenderer.invoke('markens:check-for-updates'),
-  installUpdateNow: () => ipcRenderer.invoke('markens:install-update'),
-  applyUpdateAndRestart: (rel) => ipcRenderer.invoke('markens:install-update', rel),
-  openReleasesPage: () => ipcRenderer.invoke('markens:open-releases-page')
+  downloadUpdate: () => ipcRenderer.invoke('markens:download-update'),
+  quitAndInstall: () => ipcRenderer.invoke('markens:quit-and-install'),
+  onOtaReady: (cb) => {
+    ipcRenderer.removeAllListeners('markens:ota-ready');
+    ipcRenderer.on('markens:ota-ready', (_e, info) => cb(info));
+  },
+  onOtaProgress: (cb) => {
+    ipcRenderer.removeAllListeners('markens:ota-progress');
+    ipcRenderer.on('markens:ota-progress', (_e, prog) => cb(prog));
+  },
+  checkNativeOtaNow: () => ipcRenderer.invoke('markens:check-native-ota'),
+  getActiveBuildInfo: () => ipcRenderer.invoke('markens:get-active-build-info'),
+  confirmOtaBootHealthy: (info) => ipcRenderer.send('markens:confirm-ota-healthy', info),
+  applyUpdateAndRestart: (rel) => ipcRenderer.send('markens:apply-update', rel),
+  reloadToLatestOta: () => ipcRenderer.send('markens:reload-ota'),
+  notifyIncomingCall: (payload) => ipcRenderer.send('markens:incoming-call', payload),
+  clearCallAttention: () => ipcRenderer.send('markens:clear-call-attention')
 });

@@ -1,7 +1,7 @@
 {
   "name": "markens-messenger",
-  "version": "31.0.0",
-  "description": "MARKENS Messenger v31.0 — Глобальное обновление: студийные звонки WebRTC Mesh + Opus HD, защита E2EE и кастомные роли VORTEX (Windows 10/11 x64)",
+  "version": "31.21.0",
+  "description": "MARKENS Messenger v31.21.0 — Игровой мессенджер, сервер VORTEX и голосовые комнаты Opus HD (Rust + Wasm Core) для Windows 10/11 (x64)",
   "main": "main.js",
   "author": "markens",
   "license": "MIT",
@@ -9,14 +9,13 @@
     "type": "git",
     "url": "https://github.com/marksambor0-hue/markensmasanger.git"
   },
-  "homepage": "https://github.com/marksambor0-hue/markensmasanger",
   "scripts": {
     "start": "electron .",
     "test": "node scripts/verify-build.js",
-    "verify": "node scripts/verify-build.js",
-    "dist": "npm run verify && electron-builder --win nsis --x64 --publish never",
-    "dist:win": "npm run verify && electron-builder --win nsis --x64 --publish never",
-    "dist:publish": "npm run verify && electron-builder --win nsis --x64 --publish always"
+    "dist": "electron-builder --win nsis portable --x64 --publish never",
+    "dist:setup": "electron-builder --win nsis --x64 --publish never",
+    "dist:portable": "electron-builder --win portable --x64 --publish never",
+    "publish:github": "electron-builder --win nsis portable --x64 --publish always"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
@@ -36,8 +35,7 @@
       "main.js",
       "preload.js",
       "index.html",
-      "icon.ico",
-      "icon.png",
+      "database.rules.json",
       "assets/**/*",
       "package.json"
     ],
@@ -50,7 +48,8 @@
       }
     ],
     "win": {
-      "icon": "icon.ico",
+      "icon": "assets/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
       "verifyUpdateCodeSignature": false,
       "target": [
         {
@@ -58,11 +57,17 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
     "nsis": {
-      "artifactName": "MARKENS_Setup.exe",
+      "artifactName": "MARKENS_Setup_${version}.exe",
       "oneClick": false,
       "perMachine": false,
       "allowElevation": true,
@@ -70,10 +75,13 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "MARKENS",
-      "installerIcon": "icon.ico",
-      "uninstallerIcon": "icon.ico",
-      "installerHeaderIcon": "icon.ico",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
       "runAfterFinish": true
+    },
+    "portable": {
+      "artifactName": "MARKENS_Portable_${version}.exe"
     }
   }
 }

@@ -1,0 +1,171 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "secret_tokens_v31": {
+      ".read": false,
+      "$user": {
+        ".write": "!data.exists() || newData.exists()"
+      }
+    },
+    "auth_sessions_v31": {
+      ".read": false,
+      "$sessionId": {
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    },
+    "accounts": {
+      ".read": true,
+      ".write": false,
+      "$user": {
+        ".read": true,
+        ".write": "newData.exists()"
+      }
+    },
+    "presence_v24": {
+      ".read": true,
+      "$user": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    },
+    "channels_v22": {
+      ".read": false,
+      ".write": false,
+      "$channel": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()",
+        "$msgId": {
+          ".read": true,
+          ".write": "newData.exists() || !newData.exists()"
+        }
+      }
+    },
+    "friends_v22": {
+      ".read": false,
+      "$user": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()",
+        "$friend": {
+          ".read": true,
+          ".write": "newData.exists() || !newData.exists()"
+        }
+      }
+    },
+    "friend_requests_v24": {
+      ".read": false,
+      "$user": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()",
+        "$fromUser": {
+          ".read": true,
+          ".write": "newData.exists() || !newData.exists()"
+        }
+      }
+    },
+    "voiceRooms_v22": {
+      ".read": true,
+      "$user": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    },
+    "voice_rooms_v24": {
+      ".read": true,
+      "$roomId": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    },
+    "webrtc_sig_v28": {
+      ".read": true,
+      "$pair": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    },
+    "dm_calls_v25": {
+      ".read": true,
+      "$callId": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    },
+    "watchparty_v24": {
+      ".read": true,
+      "$room": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    },
+    "groups_v29": {
+      ".read": true,
+      "$groupId": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    },
+    "group_invites_v29": {
+      ".read": true,
+      "$user": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()",
+        "$groupId": {
+          ".read": true,
+          ".write": "newData.exists() || !newData.exists()"
+        }
+      }
+    },
+    "blocks_v31": {
+      ".read": true,
+      "$user": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()",
+        "$target": {
+          ".read": true,
+          ".write": "newData.exists() || !newData.exists()"
+        }
+      }
+    },
+    "vortex_roles_v30": {
+      ".read": true,
+      ".write": "newData.exists() || !newData.exists()"
+    },
+    "user_prefs_v26": {
+      ".read": true,
+      "$user": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    },
+    "typing_v24": {
+      ".read": true,
+      "$channel": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()",
+        "$user": {
+          ".read": true,
+          ".write": "newData.exists() || !newData.exists()"
+        }
+      }
+    },
+    "feedback_board": {
+      ".read": true,
+      "$fbId": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    },
+    "ota_update": {
+      ".read": true,
+      ".write": "newData.exists() || !newData.exists()"
+    },
+    "app_releases_v25": {
+      ".read": true,
+      "latest": {
+        ".read": true,
+        ".write": "newData.exists() || !newData.exists()"
+      }
+    }
+  }
+}

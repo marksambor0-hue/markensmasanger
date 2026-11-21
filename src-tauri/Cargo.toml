@@ -1,0 +1,19 @@
+[package]
+name = "markens-rust-core"
+version = "31.13.0"
+edition = "2021"
+description = "MARKENS Messenger Native Rust Core (Tauri v2 + WebAssembly Audio DSP & E2EE Cipher)"
+authors = ["markens"]
+
+[lib]
+name = "markens_wasm_core"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "markens-desktop-rust"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
